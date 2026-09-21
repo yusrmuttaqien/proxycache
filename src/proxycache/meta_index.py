@@ -14,17 +14,15 @@ meta side; orphaned .bin files are GC'd by size separately (documented).
 """
 
 import os
-import json
 import time
 import logging
 from typing import Dict, Optional, Tuple
 
-import config
-import hashing as hs
+from . import config
+from . import hashing as hs
+from .config import META_MAX_ENTRIES
 
 log = logging.getLogger(__name__)
-
-META_MAX_ENTRIES = int(os.getenv("META_MAX_ENTRIES", "32"))
 
 
 class MetaIndex:

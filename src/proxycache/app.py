@@ -24,13 +24,15 @@ import json
 import re
 import time
 import logging
+from contextlib import asynccontextmanager
 from typing import List, Dict, AsyncGenerator, Optional
 
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 
-from config import (
+from .config import (
+    ACQUIRE_TIMEOUT,
     BACKENDS,
     BIG_THRESHOLD_WORDS,
     BIG_THRESHOLD_TOKENS,
@@ -41,19 +43,26 @@ from config import (
     WORDS_PER_BLOCK,
     PORT,
 )
-import hashing as hs
-from llama_client import LlamaClient
-from meta_index import MetaIndex
-from receipts import Receipts
-from slot_manager import SlotManager, GSlot
-from watcher import ModelWatcher
+from . import hashing as hs
+from .llama_client import LlamaClient
+from .meta_index import MetaIndex
+from .receipts import Receipts
+from .slot_manager import SlotManager, GSlot
+from .watcher import ModelWatcher
 
 log = logging.getLogger(__name__)
 
-ACQUIRE_TIMEOUT = 300.0
 STREAM_QUEUE_SIZE = 16
 
-app = FastAPI(title="Simple KV Proxy")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Build state, yield, then stop watchers, save occupied slots, close clients."""
+    await _startup()
+    yield
+    await _shutdown()
+
+
+app = FastAPI(title="Simple KV Proxy", lifespan=lifespan)
 
 # P7: plain counters (no external deps)
 METRICS = {
@@ -127,10 +136,16 @@ async def passthrough(req: Request):
     }
 
     http = clients[0].client
-    response = await http.send(
-        http.build_request(req.method, url, content=raw, headers=headers),
-        stream=True,
-    )
+    try:
+        response = await http.send(
+            http.build_request(req.method, url, content=raw, headers=headers),
+            stream=True,
+        )
+    except httpx.HTTPError as e:
+        log.warning("passthrough_backend_error %s %s: %s", req.method, path, e)
+        return JSONResponse(
+            {"error": f"backend unavailable: {e}"}, status_code=502
+        )
 
     resp_headers = {
         k: v for k, v in response.headers.items() if k.lower() not in HOP_BY_HOP
@@ -146,8 +161,7 @@ async def passthrough(req: Request):
     return StreamingResponse(gen(), status_code=response.status_code, headers=resp_headers)
 
 
-@app.on_event("startup")
-async def startup():
+async def _startup():
     clients = [LlamaClient(be["url"]) for be in BACKENDS]
 
     # P2: slot discovery — the server's /slots is the truth, env is fallback.
@@ -181,8 +195,7 @@ async def startup():
     log.info("app_start n_backends=%d port=%d", len(BACKENDS), PORT)
 
 
-@app.on_event("shutdown")
-async def shutdown():
+async def _shutdown():
     for w in getattr(app.state, "watchers", []):
         w.stop()
     sm: SlotManager = getattr(app.state, "sm", None)

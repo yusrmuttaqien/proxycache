@@ -3,11 +3,11 @@
 import sys
 import os
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 import asyncio
 
-from slot_manager import SlotManager
+from proxycache.slot_manager import SlotManager
 
 
 class FakeClient:

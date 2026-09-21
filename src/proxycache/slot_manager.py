@@ -19,7 +19,7 @@ import asyncio
 import logging
 from typing import List, Tuple, Dict, Optional
 
-from config import BACKENDS
+from .config import BACKENDS
 
 log = logging.getLogger(__name__)
 

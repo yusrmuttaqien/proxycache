@@ -1,62 +1,132 @@
-upd
-https://github.com/airnsk/proxycache-llamacpp/tree/main
+# proxycache
 
+A transparent proxy in front of [llama.cpp](https://github.com/ggml-org/llama.cpp) that persists each
+conversation's KV cache to disk and restores it on demand — so long-context chats (30–100k tokens,
+IDE sessions) skip full re-prefill after slot eviction, model swaps, or proxy restarts.
 
+Clients keep pointing at the proxy: everything is passed through byte-for-byte except the two things
+the proxy exists to manage.
 
-<img width="1000"  alt="image_" src="https://github.com/user-attachments/assets/0d966dde-f1d8-432f-bad0-aa79a5ccf396" />
-
-### What this service is
-
-This service is a proxy in front of llama.cpp that makes long‑context chat and IDE workflows much faster by managing llama.cpp slots, reusing cached context, and restoring saved caches from disk when needed. It speaks an OpenAI‑compatible Chat Completions API, so existing clients can connect without changes, including both streaming (SSE) and non‑stream responses depending on request settings.
-
-### Why it’s needed
-
-llama.cpp provides “slots,” each holding a conversation’s KV cache so repeated requests with the same or very similar prefix can skip recomputing the whole prompt and continue from the first mismatching token, which dramatically cuts latency for large prompts. In real teams the number of users can easily exceed the number of available slots (e.g., 20 developers but only 4 slots), so naive routing causes random slot reuse and cache overwrites that waste time and GPU/CPU cycles. This proxy solves that by steering requests to the right slot, saving evicted caches to disk, and restoring them on demand, so long prompts don’t need to be recomputed from scratch each time.
-
-### How requests are balanced and slots are chosen
-
-- Slots and heat: When a request lands in a slot and its cache is valid for reuse, the slot is considered “hot,” and new requests won’t overwrite it if other options exist, preserving useful KV for future reuse.
-- Similarity matching: The proxy computes a fast, word‑block prefix similarity between the incoming conversation and existing hot slots, and only reuses a hot slot if the similarity meets a single ratio threshold (e.g., 85% of the shorter sequence), otherwise it rejects reuse to avoid polluting the hot cache with a weakly related prompt.
-- Free and cold first: If reuse is rejected, the proxy sends the request to a free slot or a cold slot (one not currently carrying a valuable hot cache), protecting high‑value contexts from accidental overwrites under load.
-- Oldest when full: If there are no free or cold slots, the proxy picks the least‑recently used slot and saves its current KV cache to disk before assigning the new request, ensuring nothing valuable is lost when the pool is exhausted.
-- Restore on demand: When a new request matches a cache that was previously saved, the proxy restores that cache into a free/cold/oldest slot and routes the request there, which takes seconds versus minutes for full prompt recomputation on long contexts, especially in IDE scenarios with 30–60k tokens.
-- Concurrency safety: Each slot is guarded with an async lock; if all are busy, the request waits for the first LRU slot to free, preventing race conditions and unintended cache overwrites during concurrent generation.
-
-### Save and restore from disk
-
-llama.cpp’s HTTP server exposes slot save/restore; saving writes a cache file to the directory provided by --slot‑save‑path, and restore loads by file basename (e.g., slotcache_`<key>`.bin), which is exactly how this proxy persists and revives caches across requests and restarts. The proxy keeps small local .meta files describing cached prefixes for fast lookup, while llama.cpp owns the actual KV .bin files under --slot‑save‑path for correctness and performance.
-
-### Quick start
-
-1) Start llama.cpp ( https://github.com/ggml-org/llama.cpp ) with slots and a cache directory:
-
-```bash
-llama-server -m ./model.gguf -np 4 --slot-save-path /var/kvcache --host 0.0.0.0 --port 8080 --swa-full
+```
+client ──▶ proxycache :8081 ──▶ llama.cpp (router) :30000 ──▶ model instance :36899
+              │  watches /models/sse
+              │  saves/restores {key}.bin via /slots/{id}
 ```
 
-This enables the OpenAI‑compatible HTTP server, a pool of 4 slots, and a directory where slot KV caches are saved and restored by basename.
+## How it works
 
-2) Run the proxy next to it:
+**Keying.** For each chat request the proxy renders the exact prompt the model will see
+(`/apply-template`), tokenizes it (`/tokenize`), and cuts the token stream into fixed blocks
+(256 tokens each), hashing every block. The conversation key is a hash of the rendered prefix.
+If the server endpoints are unavailable it falls back to word blocks.
+
+**Matching (LCP).** A restore candidate is the saved key sharing the longest common block prefix,
+with ratio ≥ `lcp_threshold`. Same chat → exact match. Chat grown → the last save is a prefix.
+Edited mid-history → shared blocks up to the edit point. Below threshold → cold start.
+
+**Slot management.** The proxy tracks which key lives in which slot (updated only on *confirmed*
+save/restore). On a request it:
+
+1. pre-saves the slot's current key if it differs from the request's and is not a pure prefix
+   (pre-eviction save — this is what makes "switch chat, come back" work),
+2. restores the best candidate into the slot,
+3. pins the chat to that slot, forwards, then saves the new state (with a cost fuse: never
+   re-saves the same key more often than `min_interval`).
+
+**Event-driven saves.** A watcher per backend consumes `GET /models/sse`: a foreign model loading
+→ preemptive save of the current key; a model unloading → slot marked cold; loaded → table reset.
+A 20s reconciler polls `/props` + `/slots` for in-model KV loss (e.g. RAM eviction).
+Shutdown (SIGTERM) saves every occupied slot.
+
+**Receipts & GC.** Every response records its reuse ratio (`cache_n / (cache_n + prompt_n)`).
+A key whose last two receipts show ~0 reuse is pruned from the index (its `.bin` stays on disk
+until a size GC). The meta index is capped (`max_entries`); oldest meta is evicted.
+
+**Pass-through.** Everything else — `/v1/models`, `/props`, `/health`, `/metrics`, the Web UI,
+tools, embeddings, anything — is forwarded raw. The proxy injects the `model` field into
+`POST /slots/{id}?action=save|restore` (required in router mode).
+
+## Quick start
 
 ```bash
-git clone https://github.com/airnsk/proxycache.git
-cd proxycache
-python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt
-python3 proxycache.py  # or: uvicorn app:app --host 0.0.0.0 --port 8081
+git clone <repo> && cd proxycache
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+
+python proxycache.py        # generates proxycache.toml on first run, then serves
 ```
 
-Your clients should call the proxy’s /v1/chat/completions endpoint; the proxy will handle similarity, slot selection, save/restore, and streaming vs non‑streaming automatically.
+Your llama.cpp (single server, or the router) is configured in `proxycache.toml`:
 
-If you run into issues using gpt-oss-20b with an IDE like Cline, follow these instructions: https://www.reddit.com/r/CLine/comments/1mtcj2v/making_gptoss_20b_and_cline_work_together/
+```toml
+[server]
+host = "0.0.0.0"
+port = 8081
 
-### Parameters
+[model]
+id = "27B-Q3.8"               # model name the router routes on
 
-- LLAMA_SERVER_URL: The llama.cpp server base URL, e.g., http://127.0.0.1:8080, which must expose the OpenAI‑compatible chat completions endpoint.
-- SLOTS_COUNT: The number of server slots (should match llama.cpp -np) so the proxy can track and plan reuse/restore correctly under load.
-- SIMILARITY_MIN_RATIO: One similarity threshold (e.g., 0.85) controlling both active reuse and disk restore; if a match is below this ratio, the proxy will prefer a free/cold slot or restore instead of overwriting a hot slot.
-- MIN_PREFIX_* (chars/words/blocks): Requests below this size are treated as “small” and steered to free/cold/oldest slots to avoid disturbing valuable hot caches used by large, long‑running prompts.
-- LOCAL_META_DIR and --slot-save-path: The proxy stores small .meta descriptors locally for fast candidate lookup, while llama.cpp reads/writes the real KV cache files under --slot‑save‑path using basename in the HTTP API.
+[[backends]]
+url = "http://127.0.0.1:30000"
+n_slots = 1                  # fallback; /slots is the source of truth at startup
 
-### Why this boosts IDE and long‑context productivity
+[meta]
+dir = "/path/to/llama-kv-cache"   # usually the server's --slot-save-path
+```
 
-For 30–60k‑token contexts typical in project‑wide IDE assistants, recomputing a full prompt can take minutes, whereas restoring a previously cached context and continuing from the first mismatching token typically takes seconds on llama.cpp, dramatically improving iteration speed for large teams with limited slots.
+Point clients (Open WebUI, Cline, …) at the proxy's port and use `/v1/chat/completions` as usual —
+streaming and non-streaming both work.
+
+## Configuration
+
+Everything lives in **`proxycache.toml`** — generated on first start if missing, edit and restart.
+No env vars, no CLI flags.
+
+| key | default | meaning |
+|---|---|---|
+| `server.host` / `server.port` | `0.0.0.0` / `8081` | listen address |
+| `server.log_level` | `INFO` | log level |
+| `server.request_timeout` | `600` | max seconds per proxied request |
+| `server.acquire_timeout` | `300` | max wait for a slot lock, then 503 |
+| `model.id` | `llama.cpp` | routing model name |
+| `backends[].url` / `n_slots` | — | backend URL, fallback slot count |
+| `hashing.words_per_block` / `tokens_per_block` | `100` / `256` | block window size |
+| `hashing.big_threshold_words` / `big_threshold_tokens` | `500` / `300` | "big request" threshold |
+| `hashing.lcp_threshold` | `0.6` | min LCP ratio to restore |
+| `meta.dir` | `./kv_meta` | meta directory (put it on the llama host) |
+| `meta.max_entries` | `32` | index cap, oldest evicted |
+| `saves.min_interval` | `10` | seconds between saves of the same key |
+
+## Endpoints
+
+| path | behaviour |
+|---|---|
+| `POST /v1/chat/completions` | the watch: key → match → restore → pin → save |
+| `POST /slots/{id}?action=save\|restore` | pass-through + `model` injection |
+| `GET /metrics` | proxy counters (`proxycache_*`) |
+| everything else | byte-for-byte pass-through |
+
+## Tests
+
+```bash
+pytest tests/
+```
+
+Unit tests cover hashing/LCP, the meta index (cap, persistence, filtering), receipts/stale
+pruning, and the slot manager (acquire/release, table semantics, cost fuse).
+
+## Layout
+
+```
+src/proxycache/
+  app.py           # FastAPI app: passthrough, the watch, lifespan
+  config.py        # toml config, generated on first start
+  hashing.py       # prefix rendering, block hashing, LCP
+  llama_client.py  # httpx client: chat, slots, models, sse
+  slot_manager.py  # slot table, locks, save/restore, shutdown saves
+  meta_index.py    # in-memory meta index + cap GC
+  receipts.py      # reuse receipts, stale-key pruning
+  watcher.py       # /models/sse lifecycle watcher + reconciler
+```
+
+Design records: [`assessment.md`](assessment.md) (why), [`upgrade.md`](upgrade.md) (what was built, in order), [`flows.md`](flows.md) (request flow).

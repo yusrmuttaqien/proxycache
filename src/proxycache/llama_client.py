@@ -18,7 +18,7 @@ import httpx
 import logging
 from typing import Dict, Optional, Tuple
 
-from config import REQUEST_TIMEOUT
+from .config import REQUEST_TIMEOUT
 
 log = logging.getLogger(__name__)
 

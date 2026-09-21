@@ -25,7 +25,7 @@ import time
 import logging
 from typing import Dict
 
-import config
+from . import config
 
 log = logging.getLogger(__name__)
 

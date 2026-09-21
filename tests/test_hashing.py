@@ -3,9 +3,9 @@
 import sys
 import os
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-import hashing as hs
+from proxycache import hashing as hs
 
 
 def test_raw_prefix_joins_contents():

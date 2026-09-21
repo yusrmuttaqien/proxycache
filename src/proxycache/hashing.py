@@ -16,13 +16,12 @@ import os
 import json
 import hashlib
 import re
-import time
 import glob
 import logging
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict
 
-import config
-from config import WORDS_PER_BLOCK
+from . import config
+from .config import WORDS_PER_BLOCK
 
 log = logging.getLogger(__name__)
 
@@ -100,9 +99,4 @@ def scan_all_meta() -> List[Dict]:
             log.warning("scan_meta_fail %s: %s", f, e)
     log.debug("scan_meta n_found=%d", len(metas))
     return metas
-
-
-    path = os.path.join(META_DIR, f"{key}.meta.json")
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(meta, f, indent=2, ensure_ascii=False)
 

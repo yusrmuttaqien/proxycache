@@ -26,8 +26,8 @@ import json
 import logging
 from typing import Optional
 
-from slot_manager import SlotManager
-from llama_client import LlamaClient
+from .slot_manager import SlotManager
+from .llama_client import LlamaClient
 
 log = logging.getLogger(__name__)
 
