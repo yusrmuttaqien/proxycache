@@ -3,23 +3,20 @@
 # -*- coding: utf-8 -*-
 
 """
-Simple KV Proxy (бронебойный):
+Simple KV proxy.
 
-- Большие: LCP→restore, затем чат строго в этот же слот, потом save+meta.
-- Малые: свободный/старый слот, без restore и без дискового save/meta.
-- Пин slota дублируется в root/options/query (через клиента).
+- Big requests: LCP match -> restore, chat pinned to that slot, then save + meta.
+- Small requests: free/oldest slot, no restore, no disk save/meta.
+- Slot pin is duplicated in body root / options / query (see llama_client).
 
-Дополнительно:
-
-- acquire_for_request обёрнут в таймаут, чтобы не висеть бесконечно, если слот не отпускается.
-- save/restore не фатальны для ответа (P0): ошибка сохранения не ломает чат.
-- shutdown: SIGTERM → сохраним текущий key каждого занятого слота.
-- Для stream:
-    * чтение из llama.cpp идёт в отдельной фоновой задаче (reader);
-    * reader пушит чанки в asyncio.Queue;
-    * в своём finally reader всегда делает save_after + write_meta + release(g),
-      и кладёт в очередь sentinel None;
-    * StreamingResponse читает из очереди и никак не влияет на release слота.
+Notes:
+- acquire_for_request is wrapped in a timeout so a stuck slot cannot hang the app.
+- Save/restore failures are non-fatal (P0): a failed save never breaks the chat.
+- Shutdown (SIGTERM): save the current key of every occupied slot.
+- Stream: reading from llama.cpp runs in a background reader task; the reader
+  pushes chunks into an asyncio.Queue; in its finally it always does
+  save_after + write_meta + release, then puts a None sentinel; the
+  StreamingResponse only reads the queue and never affects slot release.
 """
 
 import asyncio
@@ -44,6 +41,7 @@ import hashing as hs
 from llama_client import LlamaClient
 from receipts import Receipts
 from slot_manager import SlotManager, GSlot
+from watcher import ModelWatcher
 
 log = logging.getLogger(__name__)
 
@@ -61,11 +59,21 @@ async def startup():
     app.state.clients = clients
     app.state.sm = sm
     app.state.receipts = Receipts()
+
+    # B2/EV: model lifecycle watcher per backend.
+    watchers: List[ModelWatcher] = []
+    for be_id, client in enumerate(clients):
+        w = ModelWatcher(be_id, client, sm, model=MODEL_ID)
+        watchers.append(w)
+        await w.start()
+    app.state.watchers = watchers
     log.info("app_start n_backends=%d port=%d", len(BACKENDS), PORT)
 
 
 @app.on_event("shutdown")
 async def shutdown():
+    for w in getattr(app.state, "watchers", []):
+        w.stop()
     sm: SlotManager = getattr(app.state, "sm", None)
     if sm is not None:
         try:
@@ -102,7 +110,7 @@ async def start_stream_task(
             async for chunk in resp.aiter_raw():
                 if not chunk:
                     continue
-                # A1: ищем последний JSON-чанк с timings (финальный SSE).
+                # A1: find the last SSE JSON chunk carrying timings.
                 for line in chunk.decode("utf-8", "ignore").splitlines():
                     line = line.strip()
                     if line.startswith("data:"):
@@ -125,7 +133,7 @@ async def start_stream_task(
         except Exception as e:
             log.exception("stream_reader_error g=%s key=%s: %s", g, key[:16], e)
         finally:
-            # A1: чек повторного использования KV.
+            # A1: record the KV reuse receipt.
             if last_json is not None:
                 try:
                     timings = last_json.get("timings") or {}
@@ -180,7 +188,7 @@ async def chat(req: Request):
     stream = bool(data.get("stream", False))
     client_model = data.get("model") or MODEL_ID
 
-    # model_id берём у первого backend'а
+    # model_id from the first backend (keying identity)
     backend_model_id = await clients[0].get_model_id()
 
     prefix = hs.raw_prefix(messages)

@@ -3,18 +3,13 @@
 # -*- coding: utf-8 -*-
 
 """
-Raw-хэширование: raw_prefix без ролей, только контент, разделённый двойным переводом строки.
+Raw prefix hashing.
 
-Блоки по 100 слов, LCP по полным SHA256-хэшам.
-Key = sha256(model_id + "\\n" + raw_prefix), т.е. модель включена в ключ.
+raw_prefix: message contents only (no roles), joined with double newlines.
+Blocks of 100 words, LCP over full SHA256 digests.
+Key = sha256(model_id + "\\n" + raw_prefix) — the model is part of the key.
 
-Метафайлы содержат:
-- key
-- model_id
-- prefix_len
-- wpb
-- blocks
-- timestamp
+Meta files contain: key, model_id, prefix_len, wpb, blocks, timestamp.
 """
 
 import os
@@ -71,7 +66,7 @@ def lcp_blocks(blocks1: List[str], blocks2: List[str]) -> int:
 
 def prefix_key_sha256(text: str) -> str:
     """
-    Базовая SHA256-обёртка; для кеша в неё передаём model_id + "\\n" + raw_prefix.
+    SHA256 wrapper; callers pass model_id + "\\n" + raw_prefix.
     """
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -101,11 +96,9 @@ def find_best_restore_candidate(
     model_id: str,
 ) -> Optional[Tuple[str, float]]:
     """
-    Ищет лучший кандидат для restore среди мета-файлов ТОЛЬКО текущей модели.
+    Best restore candidate among meta files of THIS model only.
 
-    Фильтруем по:
-    - meta["model_id"] == model_id
-    - meta["wpb"] == wpb
+    Filters: meta["model_id"] == model_id and meta["wpb"] == wpb.
     """
     metas = scan_all_meta()
     best_key: Optional[str] = None
@@ -137,7 +130,7 @@ def write_meta(
     model_id: str,
 ) -> None:
     """
-    Записывает/перезаписывает meta-файл для key, привязанный к конкретной модели.
+    Write/overwrite the meta file for key (bound to a specific model).
     """
     meta = {
         "key": key,

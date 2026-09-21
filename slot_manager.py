@@ -3,15 +3,15 @@
 # -*- coding: utf-8 -*-
 
 """
-Упрощённый SlotManager: только free/oldest по LRU, без hot/cold.
+Simplified SlotManager: free/oldest by LRU only, no hot/cold.
 
-- get_slot(): сначала свободный (ещё не использовался), иначе самый старый по времени.
-- Для big: если есть restore_key — делаем restore на выбранный слот.
-- Сохранение всегда после завершения запроса.
+- Slot selection: free (never used) first, otherwise the oldest by time.
+- Big requests: if restore_key is given, restore into the chosen slot.
+- Save always happens after the request completes.
 
-Явная таблица слот→key (_slot_keys): обновляется ТОЛЬКО при реальном
-успешном save/restore. Это единственное доверенное представление о том,
-что лежит в слоте (см. upgrade.md B1).
+Explicit slot->key table (_slot_keys): updated ONLY on a confirmed
+successful save/restore. This is the single trusted source for what a
+slot holds (see upgrade.md B1).
 """
 
 import time
@@ -47,8 +47,8 @@ class SlotManager:
             g: asyncio.Lock() for g in self._all_slots
         }
 
-        # B1: явная таблица «в слоте лежит key K» — только на основе
-        # подтверждённых save/restore. model_id храним вместе с key.
+        # B1: "slot holds key K" — only from confirmed save/restore.
+        # model id is stored alongside the key.
         self._slot_keys: Dict[GSlot, str] = {}
         self._slot_models: Dict[GSlot, str] = {}
 
@@ -109,14 +109,14 @@ class SlotManager:
         ok = await client.save_slot(g[1], key, model)
         self._last_used[g] = time.time()
         if ok:
-            # Таблицу трогаем только при подтверждённом save.
+            # Table is updated only on a confirmed save.
             self._slot_keys[g] = key
             if model:
                 self._slot_models[g] = model
         return ok
 
     def mark_cold(self, g: GSlot) -> None:
-        """KV в слоте потеряно (sleep/overflow/смена модели) — key живёт только на диске."""
+        """Slot KV is gone (sleep/overflow/model swap) — the key is disk-only now."""
         self._slot_keys.pop(g, None)
         self._slot_models.pop(g, None)
 
@@ -124,7 +124,7 @@ class SlotManager:
         return self._slot_keys.get(g)
 
     async def shutdown_save(self) -> None:
-        """SIGTERM-сохранение: сохраним текущий key каждого занятого слота."""
+        """SIGTERM save: persist the current key of every occupied slot."""
         for g, key in list(self._slot_keys.items()):
             model = self._slot_models.get(g)
             try:

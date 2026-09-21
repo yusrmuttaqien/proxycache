@@ -3,14 +3,15 @@
 # -*- coding: utf-8 -*-
 
 """
-HTTP-клиент к llama.cpp: /v1/chat/completions (stream/non-stream), /slots save/restore, /v1/models.
+HTTP client for llama.cpp: /v1/chat/completions (stream/non-stream),
+/slots save/restore, /v1/models, /props, /slots, /models/sse.
 
-- stream: build_request+send(stream=True), сырые байты.
-- non-stream: строгий JSON парсинг + fallback, если content-type не JSON.
-- /slots: filename + model в JSON-теле (router-режим требует model в теле,
-  query-параметр ?model= игнорируется).
-- Пин слота дублируется в root/options/query.
-- get_model_id(): получает текущий id модели с /v1/models.
+- stream: build_request + send(stream=True), raw bytes.
+- non-stream: strict JSON parse with a fallback if content-type is not JSON.
+- /slots: filename + model in the JSON body (router mode requires model
+  in the body; the ?model= query parameter is ignored).
+- Slot pin is duplicated in body root / options / query.
+- get_model_id(): fetches the current model id from /v1/models.
 """
 
 import httpx
@@ -119,8 +120,8 @@ class LlamaClient:
         basename: str,
         model: Optional[str] = None,
     ) -> bool:
-        # JSON body: {"filename": ..., "model": ...} — router-режим требует
-        # model в теле (query-параметр игнорируется); без model — 400.
+        # JSON body: {"filename": ..., "model": ...} — router mode requires
+        # model in the body (query param ignored); without it the router 400s.
         payload: Dict = {"filename": basename}
         if model:
             payload["model"] = model
@@ -175,12 +176,45 @@ class LlamaClient:
             return False
         return True
 
+    async def get_props(self, model: Optional[str] = None) -> Optional[Dict]:
+        """GET /props (router: ?model=). Returns {is_sleeping, ...} or None on error."""
+        try:
+            params = {"model": model} if model else None
+            resp = await self.client.get("/props", params=params)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            log.warning("get_props_fail model=%s: %s", model, e)
+            return None
+
+    async def get_slots(self, model: Optional[str] = None) -> Optional[list]:
+        """GET /slots (router: ?model=). Returns the slot state list or None."""
+        try:
+            params = {"model": model} if model else None
+            resp = await self.client.get("/slots", params=params)
+            resp.raise_for_status()
+            data = resp.json()
+            return data if isinstance(data, list) else None
+        except Exception as e:
+            log.warning("get_slots_fail model=%s: %s", model, e)
+            return None
+
+    async def models_sse(self):
+        """Raw SSE stream from /models/sse (router). Returns the streamed response."""
+        req = self.client.build_request("GET", "/models/sse")
+        resp = await self.client.send(req, stream=True)
+        if resp.status_code != 200:
+            log.warning("models_sse_status=%d", resp.status_code)
+            await resp.aclose()
+            return None
+        return resp
+
     async def get_model_id(self) -> str:
         """
-        Получает id модели у конкретного llama.cpp через /v1/models.
+        Fetch the model id from this llama.cpp via /v1/models.
 
-        Используется только для внутреннего кеширования (ключи файлов/мета),
-        наружу прокси продолжает отдавать MODEL_ID из своей конфигурации.
+        Used only for internal keying (file/meta names); the proxy still
+        reports its configured MODEL_ID outward.
         """
         try:
             resp = await self.client.get("/v1/models")

@@ -3,21 +3,21 @@
 # -*- coding: utf-8 -*-
 
 """
-A1 — «чеки» повторного использования KV.
+A1 — KV reuse receipts.
 
-llama.cpp отвечает timings.cache_n (токенов, взятых из KV) и
-timings.prompt_n (пересчитанных). Отношение cache_n/(cache_n+prompt_n)
-показывает, сколько запрос реально повторил кеш.
+llama.cpp reports timings.cache_n (tokens served from KV) and
+timings.prompt_n (tokens recomputed). The ratio cache_n/(cache_n+prompt_n)
+shows how much of the prompt the request actually reused.
 
-Для каждого meta-key ведём скользящий учёт:
-- record(key, cache_n, prompt_n) — после каждого завершённого запроса;
-- is_stale(key) — True, если последние N запросов к key почти ничего
-  не повторили (кеш на диске/в слоте, вероятно, мёртвый);
-- prune_stale() — удаляет meta-файлы stale-ключей (сам .bin на хосте
-  llama.cpp остаётся; GC по размеру — P3).
+Per meta-key we keep a rolling record:
+- record(key, cache_n, prompt_n) — after every completed request;
+- is_stale(key) — True if the last N requests to key reused almost
+  nothing (the disk/slot cache is probably dead);
+- prune_stale() — removes meta files of stale keys (the .bin on the
+  llama.cpp host stays; size-based GC is P3).
 
-Память-только: после рестарта прокси счётчики пустые, и это
-корректно — первый запрос к key станет свежей проверкой.
+Memory-only: after a proxy restart the counters are empty, which is
+fine — the first request to a key becomes a fresh check.
 """
 
 import os
@@ -29,8 +29,8 @@ from config import META_DIR
 
 log = logging.getLogger(__name__)
 
-STALE_WINDOW = 2      # сколько последних чеков смотрим
-STALE_RATIO = 0.2     # ниже этого по reuse — считаем мёртвым
+STALE_WINDOW = 2      # how many recent receipts to inspect
+STALE_RATIO = 0.2     # below this reuse ratio the key is considered dead
 
 
 class Receipts:
@@ -58,7 +58,7 @@ class Receipts:
         self._stats.pop(key, None)
 
     def prune_stale(self, keys: list) -> list:
-        """Удаляет meta-файлы stale-ключей из переданного списка. Возвращает удалённые."""
+        """Remove meta files of stale keys from the given list; returns removed keys."""
         removed = []
         for key in keys:
             if self.is_stale(key):
