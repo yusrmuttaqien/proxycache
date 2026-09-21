@@ -56,6 +56,16 @@ def block_hashes_from_text(text: str, wpb: int = WORDS_PER_BLOCK) -> List[str]:
     return hashes
 
 
+def token_blocks_from_ids(tokens: List[int], tpb: int) -> List[str]:
+    """A2: block hashes over TOKEN blocks (what llama.cpp actually caches)."""
+    hashes: List[str] = []
+    for i in range(0, len(tokens), tpb):
+        block = " ".join(str(t) for t in tokens[i:i + tpb])
+        hashes.append(hashlib.sha256(block.encode("utf-8")).hexdigest())
+    log.debug("token_blocks n_blocks=%d tpb=%d", len(hashes), tpb)
+    return hashes
+
+
 def lcp_blocks(blocks1: List[str], blocks2: List[str]) -> int:
     n = min(len(blocks1), len(blocks2))
     i = 0
@@ -128,6 +138,7 @@ def write_meta(
     blocks: List[str],
     wpb: int,
     model_id: str,
+    unit: str = "words",
 ) -> None:
     """
     Write/overwrite the meta file for key (bound to a specific model).
@@ -137,6 +148,7 @@ def write_meta(
         "model_id": model_id,
         "prefix_len": len(prefix_text),
         "wpb": wpb,
+        "unit": unit,
         "blocks": blocks,
         "timestamp": time.time(),
     }

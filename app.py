@@ -32,8 +32,10 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from config import (
     BACKENDS,
     BIG_THRESHOLD_WORDS,
+    BIG_THRESHOLD_TOKENS,
     LCP_TH,
     MODEL_ID,
+    TOKENS_PER_BLOCK,
     WORDS_PER_BLOCK,
     PORT,
 )
@@ -96,6 +98,8 @@ async def start_stream_task(
     key: str,
     prefix: str,
     blocks: List[str],
+    wpb: int,
+    unit: str,
     model_id: str,
     route_model: str,
     sm: SlotManager,
@@ -154,7 +158,7 @@ async def start_stream_task(
             except Exception as e:
                 log.warning("save_after_exception g=%s key=%s: %s", g, key[:16], e)
             try:
-                hs.write_meta(key, prefix, blocks, WORDS_PER_BLOCK, model_id)
+                hs.write_meta(key, prefix, blocks, wpb, model_id, unit)
             except Exception as e:
                 log.warning("write_meta_exception key=%s: %s", key[:16], e)
             sm.release(g)
@@ -197,20 +201,42 @@ async def chat(req: Request):
     # model_id from the first backend (keying identity)
     backend_model_id = await clients[0].get_model_id()
 
-    prefix = hs.raw_prefix(messages)
+    # A2: hash what the model actually sees — server-rendered prompt
+    # tokenized into token blocks. Falls back to raw word blocks when
+    # /apply-template or /tokenize is unavailable.
+    rendered = await clients[0].apply_template(data)
+    if rendered is not None:
+        tokens = await clients[0].tokenize(rendered, client_model)
+        if tokens:
+            prefix = rendered
+            blocks = hs.token_blocks_from_ids(tokens, TOKENS_PER_BLOCK)
+            wpb = TOKENS_PER_BLOCK
+            unit = "tokens"
+            is_big = len(tokens) > BIG_THRESHOLD_TOKENS
+        else:
+            prefix = hs.raw_prefix(messages)
+            blocks = hs.block_hashes_from_text(prefix, WORDS_PER_BLOCK)
+            wpb = WORDS_PER_BLOCK
+            unit = "words"
+            is_big = len(hs.words_from_text(prefix)) > BIG_THRESHOLD_WORDS
+    else:
+        prefix = hs.raw_prefix(messages)
+        blocks = hs.block_hashes_from_text(prefix, WORDS_PER_BLOCK)
+        wpb = WORDS_PER_BLOCK
+        unit = "words"
+        is_big = len(hs.words_from_text(prefix)) > BIG_THRESHOLD_WORDS
+
     full_for_key = backend_model_id + "\n" + prefix
     key = hs.prefix_key_sha256(full_for_key)
-    blocks = hs.block_hashes_from_text(prefix, WORDS_PER_BLOCK)
-    n_words = len(hs.words_from_text(prefix))
-    is_big = n_words > BIG_THRESHOLD_WORDS
 
     restore_key: Optional[str] = None
     if is_big:
         cand = hs.find_best_restore_candidate(
             blocks,
-            WORDS_PER_BLOCK,
+            wpb,
             LCP_TH,
             backend_model_id,
+            unit,
         )
         if cand:
             restore_key, ratio = cand
@@ -229,8 +255,10 @@ async def chat(req: Request):
         )
 
     log.info(
-        "before_acquire is_big=%s restore_key=%s",
+        "before_acquire is_big=%s unit=%s n_blocks=%d restore_key=%s",
         is_big,
+        unit,
+        len(blocks),
         restore_key[:16] if restore_key else None,
     )
 
@@ -299,6 +327,8 @@ async def chat(req: Request):
                 key,
                 prefix,
                 blocks,
+                wpb,
+                unit,
                 backend_model_id,
                 client_model,
                 sm,
@@ -351,8 +381,9 @@ async def chat(req: Request):
                         key,
                         prefix,
                         blocks,
-                        WORDS_PER_BLOCK,
+                        wpb,
                         backend_model_id,
+                        unit,
                     )
                 except Exception as e:
                     log.warning("write_meta_exception key=%s: %s", key[:16], e)

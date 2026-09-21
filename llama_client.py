@@ -199,6 +199,40 @@ class LlamaClient:
             log.warning("get_slots_fail model=%s: %s", model, e)
             return None
 
+    async def apply_template(self, body: Dict) -> Optional[str]:
+        """POST /apply-template — the exact prompt text the model will see.
+
+        Returns the rendered prompt, or None on any failure (caller falls
+        back to raw_prefix hashing).
+        """
+        try:
+            resp = await self.client.post("/apply-template", json=body)
+            resp.raise_for_status()
+            data = resp.json()
+            # Verified: the field is "prompt", not "content".
+            return data.get("prompt")
+        except Exception as e:
+            log.warning("apply_template_fail: %s", e)
+            return None
+
+    async def tokenize(self, text: str, model: Optional[str] = None) -> Optional[list]:
+        """POST /tokenize — token ids for the given text, or None on failure.
+
+        Router mode requires model in the body (400 without it).
+        """
+        payload = {"content": text}
+        if model:
+            payload["model"] = model
+        try:
+            resp = await self.client.post("/tokenize", json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            tokens = data.get("tokens")
+            return tokens if isinstance(tokens, list) else None
+        except Exception as e:
+            log.warning("tokenize_fail: %s", e)
+            return None
+
     async def models_sse(self):
         """Raw SSE stream from /models/sse (router). Returns the streamed response."""
         req = self.client.build_request("GET", "/models/sse")

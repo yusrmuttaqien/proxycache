@@ -31,6 +31,10 @@ WORDS_PER_BLOCK = int(os.getenv("WORDS_PER_BLOCK", "100"))
 # Big request threshold
 BIG_THRESHOLD_WORDS = int(os.getenv("BIG_THRESHOLD_WORDS", "500"))
 
+# A2: token-block hashing (applied server rendering)
+TOKENS_PER_BLOCK = int(os.getenv("TOKENS_PER_BLOCK", "256"))
+BIG_THRESHOLD_TOKENS = int(os.getenv("BIG_THRESHOLD_TOKENS", "300"))
+
 # LCP threshold (0..1)
 LCP_TH = float(os.getenv("LCP_TH", "0.6"))
 
