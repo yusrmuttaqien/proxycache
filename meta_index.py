@@ -19,8 +19,8 @@ import time
 import logging
 from typing import Dict, Optional, Tuple
 
+import config
 import hashing as hs
-from config import META_DIR
 
 log = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ class MetaIndex:
             "blocks": blocks,
             "timestamp": time.time(),
         }
-        path = os.path.join(META_DIR, f"{key}.meta.json")
+        path = os.path.join(config.META_DIR, f"{key}.meta.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2, ensure_ascii=False)
         self._metas[key] = meta
@@ -110,7 +110,7 @@ class MetaIndex:
             oldest = min(self._metas.values(), key=lambda m: m.get("timestamp", 0))
             key = oldest.get("key")
             self._metas.pop(key, None)
-            path = os.path.join(META_DIR, f"{key}.meta.json")
+            path = os.path.join(config.META_DIR, f"{key}.meta.json")
             try:
                 if os.path.exists(path):
                     os.remove(path)

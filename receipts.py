@@ -25,7 +25,7 @@ import time
 import logging
 from typing import Dict
 
-from config import META_DIR
+import config
 
 log = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ class Receipts:
         removed = []
         for key in keys:
             if self.is_stale(key):
-                path = os.path.join(META_DIR, f"{key}.meta.json")
+                path = os.path.join(config.META_DIR, f"{key}.meta.json")
                 try:
                     if os.path.exists(path):
                         os.remove(path)

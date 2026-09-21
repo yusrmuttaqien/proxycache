@@ -21,7 +21,8 @@ import glob
 import logging
 from typing import List, Dict, Optional, Tuple
 
-from config import META_DIR, WORDS_PER_BLOCK
+import config
+from config import WORDS_PER_BLOCK
 
 log = logging.getLogger(__name__)
 
@@ -30,6 +31,8 @@ def raw_prefix(messages: List[Dict]) -> str:
     parts = []
     for msg in messages or []:
         content = msg.get("content", "")
+        if content is None:
+            continue
         if isinstance(content, str):
             content = content.strip()
         else:
@@ -83,7 +86,7 @@ def prefix_key_sha256(text: str) -> str:
 
 def scan_all_meta() -> List[Dict]:
     files = sorted(
-        glob.glob(os.path.join(META_DIR, "*.meta.json")),
+        glob.glob(os.path.join(config.META_DIR, "*.meta.json")),
         key=os.path.getmtime,
         reverse=True,
     )

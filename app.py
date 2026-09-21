@@ -54,6 +54,27 @@ STREAM_QUEUE_SIZE = 16
 
 app = FastAPI(title="Simple KV Proxy")
 
+# P7: plain counters (no external deps)
+METRICS = {
+    "requests_total": 0,
+    "big_requests_total": 0,
+    "restore_attempts_total": 0,
+    "restore_ok_total": 0,
+    "save_attempts_total": 0,
+    "save_ok_total": 0,
+    "tokens_reused_total": 0,
+}
+
+
+def _count(k: str, v: int = 1):
+    METRICS[k] += v
+
+
+@app.get("/metrics")
+async def metrics():
+    lines = [f"proxycache_{k} {v}" for k, v in METRICS.items()]
+    return "\n".join(lines) + "\n"
+
 
 @app.on_event("startup")
 async def startup():
@@ -161,6 +182,7 @@ async def start_stream_task(
                     timings = last_json.get("timings") or {}
                     cache_n = int(timings.get("cache_n") or 0)
                     prompt_n = int(timings.get("prompt_n") or 0)
+                    _count("tokens_reused_total", cache_n)
                     receipts.record(key, cache_n, prompt_n)
                     if receipts.is_stale(key):
                         receipts.prune_stale([key])
@@ -213,6 +235,7 @@ async def chat(req: Request):
     clients: List[LlamaClient] = app.state.clients
 
     t0 = time.time()
+    _count("requests_total")
     data = await req.json()
 
     messages: List[Dict] = data.get("messages") or []
@@ -251,6 +274,8 @@ async def chat(req: Request):
     key = hs.prefix_key_sha256(full_for_key)
 
     index: MetaIndex = app.state.index
+    if is_big:
+        _count("big_requests_total")
     restore_key: Optional[str] = None
     if is_big:
         cand = index.find_best(
@@ -319,7 +344,10 @@ async def chat(req: Request):
 
     restored: Optional[bool] = None
     if is_big and restore_key:
+        _count("restore_attempts_total")
         restored = await sm.restore(g, restore_key, client_model)
+        if restored:
+            _count("restore_ok_total")
 
     log.info("after_acquire g=%s restored=%s cur_key=%s", g, restored,
              cur_key[:16] if cur_key else None)
@@ -404,10 +432,12 @@ async def chat(req: Request):
             receipts: Receipts = app.state.receipts
             index: MetaIndex = app.state.index
             timings = out.get("timings") or {}
+            cache_n = int(timings.get("cache_n") or 0)
+            _count("tokens_reused_total", cache_n)
             try:
                 receipts.record(
                     key,
-                    int(timings.get("cache_n") or 0),
+                    cache_n,
                     int(timings.get("prompt_n") or 0),
                 )
                 if receipts.is_stale(key):
@@ -421,8 +451,11 @@ async def chat(req: Request):
                 # SV cost fuse: never re-save the same key more often than
                 # SAVE_MIN_INTERVAL (bounds crash loss without churning disk).
                 if sm.save_allowed(key, SAVE_MIN_INTERVAL):
+                    _count("save_attempts_total")
                     try:
                         ok = await sm.save_after(g, key, client_model, len(prefix))
+                        if ok:
+                            _count("save_ok_total")
                     except Exception as e:
                         log.warning("save_after_exception g=%s key=%s: %s", g, key[:16], e)
                 else:
