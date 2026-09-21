@@ -40,6 +40,7 @@ from .config import (
     LCP_TH,
     META_DIR,
     MODELS,
+    EVENT_SAVES,
     SAVE_MIN_INTERVAL,
     SAVE_PATH,
     TOKENS_PER_BLOCK,
@@ -107,6 +108,8 @@ async def _preunload_save(raw: bytes) -> None:
     except Exception:
         return
     if not m:
+        return
+    if not EVENT_SAVES:
         return
     sm: SlotManager = app.state.sm
     for g in sm._all_slots:
@@ -267,7 +270,8 @@ async def _shutdown():
     sm: SlotManager = getattr(app.state, "sm", None)
     if sm is not None:
         try:
-            await sm.shutdown_save()
+            if EVENT_SAVES:
+                await sm.shutdown_save()
         except Exception as e:
             log.warning("shutdown_save_exception: %s", e)
     clients: List[LlamaClient] = getattr(app.state, "clients", [])

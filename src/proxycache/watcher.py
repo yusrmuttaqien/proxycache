@@ -105,7 +105,8 @@ class ModelWatcher:
             if g is not None:
                 key = self.sm.slot_key(g)
                 if key and model != slot_model:
-                    asyncio.create_task(self._preemptive_save(g, key, slot_model))
+                    if config.EVENT_SAVES:
+                        asyncio.create_task(self._preemptive_save(g, key, slot_model))
         elif status == "unloaded":
             # Only an unload of the model the slot currently holds matters.
             if model == slot_model:
