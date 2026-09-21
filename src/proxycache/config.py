@@ -58,10 +58,10 @@ dir = "./kv_meta"
 # In-memory index cap; oldest meta is evicted on write. 0 = no cap
 # (manage manually with: python proxycache.py --gc N --by created|unused).
 max_entries = 32
-# The llama host's --slot-save-path (where .bin KV files live), used by
-# --gc to delete .bin alongside .meta.json. Empty = auto-detect from
-# GET /models (the instance's command line).
-save_path = ""
+# Optional: the llama host's --slot-save-path (where .bin KV files live),
+# used by --gc and tip-keeping to delete .bin alongside .meta.json.
+# Absent/empty = auto-detect from GET /models (the instance's command line).
+# save_path = ""
 
 
 [saves]
