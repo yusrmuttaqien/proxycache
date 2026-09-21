@@ -41,6 +41,7 @@ from config import (
 )
 import hashing as hs
 from llama_client import LlamaClient
+from meta_index import MetaIndex
 from receipts import Receipts
 from slot_manager import SlotManager, GSlot
 from watcher import ModelWatcher
@@ -56,11 +57,27 @@ app = FastAPI(title="Simple KV Proxy")
 @app.on_event("startup")
 async def startup():
     clients = [LlamaClient(be["url"]) for be in BACKENDS]
+
+    # P2: slot discovery — the server's /slots is the truth, env is fallback.
+    for be_id, client in enumerate(clients):
+        slots = await client.get_slots(model=MODEL_ID)
+        if slots:
+            n = len(slots)
+            if n != int(BACKENDS[be_id]["n_slots"]):
+                log.info(
+                    "slot_discovery be=%d env_n_slots=%d server_n_slots=%d",
+                    be_id,
+                    BACKENDS[be_id]["n_slots"],
+                    n,
+                )
+            BACKENDS[be_id]["n_slots"] = n
+
     sm = SlotManager()
     sm.set_clients(clients)
     app.state.clients = clients
     app.state.sm = sm
     app.state.receipts = Receipts()
+    app.state.index = MetaIndex()
 
     # B2/EV: model lifecycle watcher per backend.
     watchers: List[ModelWatcher] = []
@@ -158,7 +175,7 @@ async def start_stream_task(
             except Exception as e:
                 log.warning("save_after_exception g=%s key=%s: %s", g, key[:16], e)
             try:
-                hs.write_meta(key, prefix, blocks, wpb, model_id, unit)
+                app.state.index.write(key, prefix, blocks, wpb, model_id, unit)
             except Exception as e:
                 log.warning("write_meta_exception key=%s: %s", key[:16], e)
             sm.release(g)
@@ -229,9 +246,10 @@ async def chat(req: Request):
     full_for_key = backend_model_id + "\n" + prefix
     key = hs.prefix_key_sha256(full_for_key)
 
+    index: MetaIndex = app.state.index
     restore_key: Optional[str] = None
     if is_big:
-        cand = hs.find_best_restore_candidate(
+        cand = index.find_best(
             blocks,
             wpb,
             LCP_TH,
@@ -358,6 +376,7 @@ async def chat(req: Request):
                 )
 
             receipts: Receipts = app.state.receipts
+            index: MetaIndex = app.state.index
             timings = out.get("timings") or {}
             try:
                 receipts.record(
@@ -367,6 +386,7 @@ async def chat(req: Request):
                 )
                 if receipts.is_stale(key):
                     receipts.prune_stale([key])
+                    index.remove(key)
             except Exception as e:
                 log.warning("receipt_fail key=%s: %s", key[:16], e)
 
@@ -377,7 +397,7 @@ async def chat(req: Request):
                 except Exception as e:
                     log.warning("save_after_exception g=%s key=%s: %s", g, key[:16], e)
                 try:
-                    hs.write_meta(
+                    index.write(
                         key,
                         prefix,
                         blocks,

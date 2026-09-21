@@ -99,59 +99,6 @@ def scan_all_meta() -> List[Dict]:
     return metas
 
 
-def find_best_restore_candidate(
-    req_blocks: List[str],
-    wpb: int,
-    th: float,
-    model_id: str,
-) -> Optional[Tuple[str, float]]:
-    """
-    Best restore candidate among meta files of THIS model only.
-
-    Filters: meta["model_id"] == model_id and meta["wpb"] == wpb.
-    """
-    metas = scan_all_meta()
-    best_key: Optional[str] = None
-    best_ratio = 0.0
-
-    for meta in metas:
-        if meta.get("model_id") != model_id:
-            continue
-        if int(meta.get("wpb") or 0) != wpb:
-            continue
-
-        cand_blocks = meta.get("blocks") or []
-        lcp = lcp_blocks(req_blocks, cand_blocks)
-        denom = max(1, min(len(req_blocks), len(cand_blocks)))
-        ratio = lcp / denom
-
-        if ratio >= th and ratio > best_ratio:
-            best_ratio = ratio
-            best_key = meta.get("key")
-
-    return (best_key, best_ratio) if best_key else None
-
-
-def write_meta(
-    key: str,
-    prefix_text: str,
-    blocks: List[str],
-    wpb: int,
-    model_id: str,
-    unit: str = "words",
-) -> None:
-    """
-    Write/overwrite the meta file for key (bound to a specific model).
-    """
-    meta = {
-        "key": key,
-        "model_id": model_id,
-        "prefix_len": len(prefix_text),
-        "wpb": wpb,
-        "unit": unit,
-        "blocks": blocks,
-        "timestamp": time.time(),
-    }
     path = os.path.join(META_DIR, f"{key}.meta.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2, ensure_ascii=False)
