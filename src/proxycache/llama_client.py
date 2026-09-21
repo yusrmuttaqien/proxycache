@@ -177,9 +177,13 @@ class LlamaClient:
         return True
 
     async def get_props(self, model: Optional[str] = None) -> Optional[Dict]:
-        """GET /props (router: ?model=). Returns {is_sleeping, ...} or None on error."""
+        """GET /props (router: ?model=). Returns {is_sleeping, ...} or None on error.
+
+        autoload=false: housekeeping must not load the model — only real
+        client traffic may trigger a load.
+        """
         try:
-            params = {"model": model} if model else None
+            params = {"model": model, "autoload": "false"} if model else None
             resp = await self.client.get("/props", params=params)
             resp.raise_for_status()
             return resp.json()
@@ -188,9 +192,13 @@ class LlamaClient:
             return None
 
     async def get_slots(self, model: Optional[str] = None) -> Optional[list]:
-        """GET /slots (router: ?model=). Returns the slot state list or None."""
+        """GET /slots (router: ?model=). Returns the slot state list or None.
+
+        autoload=false: an unloaded model reports zero slots (discovery then
+        falls back to the configured n_slots) instead of triggering a load.
+        """
         try:
-            params = {"model": model} if model else None
+            params = {"model": model, "autoload": "false"} if model else None
             resp = await self.client.get("/slots", params=params)
             resp.raise_for_status()
             data = resp.json()
