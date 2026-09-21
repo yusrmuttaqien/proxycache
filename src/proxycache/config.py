@@ -36,7 +36,7 @@ models = []
 
 # One entry per llama.cpp backend (router or single-model server).
 [[backends]]
-url = "http://127.0.0.1:8000"
+url = "http://127.0.0.1:8080"   # llama-server default port
 # Optional fallback slot count (used only if the server is unreachable at
 # startup); the server's /slots is always the source of truth. Defaults to 1.
 # n_slots = 2
