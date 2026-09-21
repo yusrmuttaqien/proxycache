@@ -69,8 +69,7 @@ port = 8081
 models = ["27B-Q3.8"]
 
 [[backends]]
-url = "http://127.0.0.1:30000"
-n_slots = 1                  # fallback; /slots is the source of truth at startup
+url = "http://127.0.0.1:30000"   # n_slots is optional (fallback only; /slots is the truth)
 
 [meta]
 dir = "/path/to/llama-kv-cache"   # usually the server's --slot-save-path
@@ -91,7 +90,7 @@ No env vars, no CLI flags.
 | `server.request_timeout` | `600` | max seconds per proxied request |
 | `server.acquire_timeout` | `300` | max wait for a slot lock, then 503 |
 | `model.models` | `[]` | managed models (empty = auto-discover all) |
-| `backends[].url` / `n_slots` | — | backend URL, fallback slot count |
+| `backends[].url` / `n_slots` | — / optional | backend URL; slot count fallback (server's `/slots` always wins) |
 | `hashing.words_per_block` / `tokens_per_block` | `100` / `256` | block window size |
 | `hashing.big_threshold_words` / `big_threshold_tokens` | `500` / `300` | "big request" threshold |
 | `hashing.lcp_threshold` | `0.6` | min LCP ratio to restore |

@@ -37,8 +37,9 @@ models = []
 # One entry per llama.cpp backend (router or single-model server).
 [[backends]]
 url = "http://127.0.0.1:8000"
-# Fallback slot count; the server's /slots is the source of truth at startup.
-n_slots = 2
+# Optional fallback slot count (used only if the server is unreachable at
+# startup); the server's /slots is always the source of truth. Defaults to 1.
+# n_slots = 2
 
 [hashing]
 # Prefixes are hashed in fixed blocks; a block is a hash of a window of
@@ -93,8 +94,10 @@ MODELS: list = list(_cfg["model"].get("models", []))
 
 # --- backends ---------------------------------------------------------------
 # Mutable list of dicts; slot discovery updates n_slots at startup.
+# n_slots is optional: the server's /slots is the truth, the config value
+# is only the fallback when the backend is unreachable at startup.
 BACKENDS = [
-    {"url": be["url"], "n_slots": int(be["n_slots"])}
+    {"url": be["url"], "n_slots": int(be.get("n_slots", 1))}
     for be in _cfg.get("backends", [])
 ]
 
