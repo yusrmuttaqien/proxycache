@@ -164,14 +164,20 @@ async def start_stream_task(
             except Exception:
                 pass
 
-    asyncio.create_task(reader())
+    reader_task = asyncio.create_task(reader())
 
     async def gen() -> AsyncGenerator[bytes, None]:
-        while True:
-            item = await queue.get()
-            if item is None:
-                break
-            yield item
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                yield item
+        finally:
+            # P5: client disconnect / response close must not leave the
+            # reader (and the slot lock) behind.
+            if not reader_task.done():
+                reader_task.cancel()
 
     return gen()
 
@@ -228,15 +234,12 @@ async def chat(req: Request):
         restore_key[:16] if restore_key else None,
     )
 
-    try:
-        g, lock, restored = await asyncio.wait_for(
-            sm.acquire_for_request(
-                restore_key if is_big else None,
-                model=client_model,
-            ),
-            timeout=ACQUIRE_TIMEOUT,
-        )
-    except asyncio.TimeoutError:
+    g, lock, restored = await sm.acquire_for_request(
+        restore_key if is_big else None,
+        model=client_model,
+        acquire_timeout=ACQUIRE_TIMEOUT,
+    )
+    if g is None:
         log.error(
             "acquire_timeout is_big=%s restore_key=%s",
             is_big,

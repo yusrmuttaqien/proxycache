@@ -78,9 +78,16 @@ class SlotManager:
         self,
         restore_key: Optional[str] = None,
         model: Optional[str] = None,
-    ) -> Tuple[GSlot, asyncio.Lock, Optional[bool]]:
+        acquire_timeout: float = 300.0,
+    ) -> Tuple[Optional[GSlot], asyncio.Lock, Optional[bool]]:
         g, lock = self._get_free_or_oldest()
-        await lock.acquire()
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=acquire_timeout)
+        except asyncio.TimeoutError:
+            # P6: cancel can land after the lock was granted -> leak. Release it.
+            if lock.locked():
+                lock.release()
+            return None, lock, None
 
         restored: Optional[bool] = None
         if restore_key:
