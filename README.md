@@ -99,6 +99,10 @@ No env vars, no CLI flags.
 | `meta.max_entries` | `32` | index cap, oldest evicted (`0` = no cap) |
 | `meta.save_path` | `""` | llama host's `--slot-save-path`; empty = auto-detect from `GET /models` |
 | `saves.min_interval` | `10` | seconds between saves of the same key |
+| `watcher.reconcile_interval` | `20` | seconds between KV-loss polls |
+| `watcher.sse_reconnect_backoff` | `5` | initial SSE reconnect delay (doubles, cap 60s) |
+| `watcher.kv_drop_ratio` | `0.1` | slot token-count drop fraction that marks cold |
+| `receipts.window` / `receipts.ratio` | `2` / `0.2` | stale-key pruning thresholds |
 
 ## Manual GC
 
