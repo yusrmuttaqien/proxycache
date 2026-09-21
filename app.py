@@ -35,6 +35,7 @@ from config import (
     BIG_THRESHOLD_TOKENS,
     LCP_TH,
     MODEL_ID,
+    SAVE_MIN_INTERVAL,
     TOKENS_PER_BLOCK,
     WORDS_PER_BLOCK,
     PORT,
@@ -170,10 +171,13 @@ async def start_stream_task(
             except Exception:
                 pass
             ok = False
-            try:
-                ok = await sm.save_after(g, key, route_model)
-            except Exception as e:
-                log.warning("save_after_exception g=%s key=%s: %s", g, key[:16], e)
+            if sm.save_allowed(key, SAVE_MIN_INTERVAL):
+                try:
+                    ok = await sm.save_after(g, key, route_model, len(prefix))
+                except Exception as e:
+                    log.warning("save_after_exception g=%s key=%s: %s", g, key[:16], e)
+            else:
+                log.info("save_skip_fuse key=%s", key[:16])
             try:
                 app.state.index.write(key, prefix, blocks, wpb, model_id, unit)
             except Exception as e:
@@ -280,11 +284,7 @@ async def chat(req: Request):
         restore_key[:16] if restore_key else None,
     )
 
-    g, lock, restored = await sm.acquire_for_request(
-        restore_key if is_big else None,
-        model=client_model,
-        acquire_timeout=ACQUIRE_TIMEOUT,
-    )
+    g = await sm.acquire(acquire_timeout=ACQUIRE_TIMEOUT)
     if g is None:
         log.error(
             "acquire_timeout is_big=%s restore_key=%s",
@@ -296,7 +296,33 @@ async def chat(req: Request):
             status_code=503,
         )
 
-    log.info("after_acquire g=%s restored=%s", g, restored)
+    # SV pre-eviction save: the slot holds a DIFFERENT key and it is not a
+    # pure prefix of the new one -> persist the old key before we overwrite.
+    cur_key = sm.slot_key(g)
+    cur_meta = index.get(cur_key) if cur_key else None
+    if cur_key and cur_key != key and cur_meta:
+        ext = False
+        if cur_meta.get("unit", "words") == unit:
+            cur_blocks = cur_meta.get("blocks") or []
+            lcp = hs.lcp_blocks(blocks, cur_blocks)
+            denom = max(1, min(len(blocks), len(cur_blocks)))
+            ext = (lcp / denom >= LCP_TH) and len(cur_blocks) <= len(blocks)
+        if not ext and sm.save_allowed(cur_key, SAVE_MIN_INTERVAL):
+            log.info("pre_save g=%s old_key=%s", g, cur_key[:16])
+            try:
+                await sm.save_after(
+                    g, cur_key, sm._slot_models.get(g),
+                    prefix_len=cur_meta.get("prefix_len", 0),
+                )
+            except Exception as e:
+                log.warning("pre_save_exception g=%s key=%s: %s", g, cur_key[:16], e)
+
+    restored: Optional[bool] = None
+    if is_big and restore_key:
+        restored = await sm.restore(g, restore_key, client_model)
+
+    log.info("after_acquire g=%s restored=%s cur_key=%s", g, restored,
+             cur_key[:16] if cur_key else None)
 
     be_id, slot_id = g
     client = clients[be_id]
@@ -392,10 +418,15 @@ async def chat(req: Request):
 
             ok = False
             if is_big:
-                try:
-                    ok = await sm.save_after(g, key, client_model)
-                except Exception as e:
-                    log.warning("save_after_exception g=%s key=%s: %s", g, key[:16], e)
+                # SV cost fuse: never re-save the same key more often than
+                # SAVE_MIN_INTERVAL (bounds crash loss without churning disk).
+                if sm.save_allowed(key, SAVE_MIN_INTERVAL):
+                    try:
+                        ok = await sm.save_after(g, key, client_model, len(prefix))
+                    except Exception as e:
+                        log.warning("save_after_exception g=%s key=%s: %s", g, key[:16], e)
+                else:
+                    log.info("save_skip_fuse key=%s", key[:16])
                 try:
                     index.write(
                         key,

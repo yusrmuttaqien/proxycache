@@ -45,6 +45,9 @@ os.makedirs(META_DIR, exist_ok=True)
 # HTTP timeout
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "600"))
 
+# SV cost fuse: min seconds between saves of the same key
+SAVE_MIN_INTERVAL = float(os.getenv("SAVE_MIN_INTERVAL", "10"))
+
 # Model id
 MODEL_ID = os.getenv("MODEL_ID", "llama.cpp")
 

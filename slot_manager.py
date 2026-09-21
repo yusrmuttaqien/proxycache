@@ -51,6 +51,10 @@ class SlotManager:
         # model id is stored alongside the key.
         self._slot_keys: Dict[GSlot, str] = {}
         self._slot_models: Dict[GSlot, str] = {}
+        # SV: prefix length at last confirmed save (growth saves) and
+        # per-key last-save time (cost fuse).
+        self._saved_len: Dict[GSlot, int] = {}
+        self._last_save: Dict[str, float] = {}
 
         log.info(
             "slot_manager n_backends=%d total_slots=%d",
@@ -74,12 +78,10 @@ class SlotManager:
         g = sorted(self._all_slots, key=lambda x: self._last_used.get(x, 0.0))[0]
         return g, self._locks[g]
 
-    async def acquire_for_request(
+    async def acquire(
         self,
-        restore_key: Optional[str] = None,
-        model: Optional[str] = None,
         acquire_timeout: float = 300.0,
-    ) -> Tuple[Optional[GSlot], asyncio.Lock, Optional[bool]]:
+    ) -> Optional[GSlot]:
         g, lock = self._get_free_or_oldest()
         try:
             await asyncio.wait_for(lock.acquire(), timeout=acquire_timeout)
@@ -87,30 +89,35 @@ class SlotManager:
             # P6: cancel can land after the lock was granted -> leak. Release it.
             if lock.locked():
                 lock.release()
-            return None, lock, None
+            return None
+        return g
 
-        restored: Optional[bool] = None
-        if restore_key:
-            client = self.backends[g[0]]["client"]
-            restored = await client.restore_slot(g[1], restore_key, model)
-            log.info(
-                "restore_before_chat g=%s key=%s ok=%s",
-                g,
-                (restore_key[:16] if restore_key else None),
-                restored,
-            )
-            if restored:
-                self._slot_keys[g] = restore_key
-                if model:
-                    self._slot_models[g] = model
-
-        return g, lock, restored
+    async def restore(
+        self,
+        g: GSlot,
+        restore_key: str,
+        model: Optional[str] = None,
+    ) -> bool:
+        client = self.backends[g[0]]["client"]
+        restored = await client.restore_slot(g[1], restore_key, model)
+        log.info(
+            "restore_before_chat g=%s key=%s ok=%s",
+            g,
+            restore_key[:16],
+            restored,
+        )
+        if restored:
+            self._slot_keys[g] = restore_key
+            if model:
+                self._slot_models[g] = model
+        return restored
 
     async def save_after(
         self,
         g: GSlot,
         key: str,
         model: Optional[str] = None,
+        prefix_len: int = 0,
     ) -> bool:
         client = self.backends[g[0]]["client"]
         ok = await client.save_slot(g[1], key, model)
@@ -120,7 +127,20 @@ class SlotManager:
             self._slot_keys[g] = key
             if model:
                 self._slot_models[g] = model
+            self._saved_len[g] = prefix_len
+            self._note_save(key)
         return ok
+
+    def saved_len(self, g: GSlot) -> int:
+        return self._saved_len.get(g, 0)
+
+    def save_allowed(self, key: str, min_interval: float) -> bool:
+        """SV cost fuse: min interval between saves of the same key."""
+        last = self._last_save.get(key, 0.0)
+        return (time.time() - last) >= min_interval
+
+    def _note_save(self, key: str) -> None:
+        self._last_save[key] = time.time()
 
     def mark_cold(self, g: GSlot) -> None:
         """Slot KV is gone (sleep/overflow/model swap) — the key is disk-only now."""
