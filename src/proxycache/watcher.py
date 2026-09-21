@@ -5,17 +5,20 @@
 """
 B2/EV — model lifecycle watcher (llama.cpp as a sibling, no bundling).
 
-Two background loops per backend:
+Manages a SET of models (multi-model router safe). Two background loops
+per backend:
 
 1. SSE subscription to GET /models/sse (router):
-   - model_status loading (a foreign model) -> save the current key NOW
-     (KV dies on a --models-max 1 swap; we save BEFORE unload, not after);
-   - unloaded -> mark_cold (the key is disk-only now);
-   - loaded   -> table starts empty; the first request restores from disk;
+   - model_status loading (a managed model that is NOT the slot's current
+     one) -> save the current key NOW (KV dies on a --models-max 1 swap;
+     we save BEFORE unload, not after);
+   - unloaded (of the slot's current model) -> mark_cold (disk-only now);
+   - loaded (of the slot's current model) -> reset the token baseline;
    - stream drop -> reconnect with backoff + reconcile (events may have
      been missed).
 
-2. Periodic reconciler (every RECONCILE_INTERVAL seconds):
+2. Periodic reconciler (every RECONCILE_INTERVAL seconds), tracking the
+   slot's CURRENT model only:
    GET /props?model=  -> is_sleeping;
    GET /slots?model= -> n_prompt_tokens;
    a sharp n_prompt_tokens drop -> mark_cold (overflow/cache pressure).
@@ -24,7 +27,7 @@ Two background loops per backend:
 import asyncio
 import json
 import logging
-from typing import Optional
+from typing import List, Optional
 
 from .slot_manager import SlotManager
 from .llama_client import LlamaClient
@@ -37,11 +40,11 @@ SSE_RECONNECT_BACKOFF = 5.0
 
 class ModelWatcher:
     def __init__(self, be_id: int, client: LlamaClient, sm: SlotManager,
-                 model: Optional[str] = None):
+                 models: List[str]):
         self.be_id = be_id
         self.client = client
         self.sm = sm
-        self.model = model
+        self.models = models
         self._stop = False
         self._last_prompt_tokens: Optional[int] = None
 
@@ -92,19 +95,25 @@ class ModelWatcher:
         model = data.get("model")
         status = data.get("status")
         log.info("watcher_model_status model=%s status=%s", model, status)
+        if model not in self.models:
+            return
+
+        g = self._find_g()
+        slot_model = self.sm._slot_models.get(g) if g is not None else None
 
         if status == "loading":
-            # A foreign model is loading -> current KV is about to die. Save NOW.
-            g = self._find_g()
+            # A managed model other than the slot's is loading -> the slot's
+            # KV is about to die. Save NOW.
             if g is not None:
                 key = self.sm.slot_key(g)
-                slot_model = self.sm._slot_models.get(g)
                 if key and model != slot_model:
                     asyncio.create_task(self._preemptive_save(g, key, slot_model))
         elif status == "unloaded":
-            self._mark_cold(model)
+            # Only an unload of the model the slot currently holds matters.
+            if model == slot_model:
+                self._mark_cold(model)
         elif status == "loaded":
-            if model == self.model:
+            if model == slot_model:
                 self._last_prompt_tokens = None
         elif status == "sleeping":
             # sleep: KV is in RAM, slot state intact — not cold.
@@ -126,9 +135,6 @@ class ModelWatcher:
         g = self._find_g()
         if g is None:
             return
-        # Only react to unload of the model we are watching.
-        if model and self.model and model != self.model:
-            return
         key = self.sm.slot_key(g)
         if key:
             self.sm.mark_cold(g)
@@ -146,7 +152,11 @@ class ModelWatcher:
         while not self._stop:
             await asyncio.sleep(RECONCILE_INTERVAL)
             try:
-                model = self.model
+                # Track only the model the slot currently holds.
+                g = self._find_g()
+                model = self.sm._slot_models.get(g) if g is not None else None
+                if model is None or model not in self.models:
+                    continue
                 props = await self.client.get_props(model)
                 slots = await self.client.get_slots(model)
                 if props is None and slots is None:
@@ -158,7 +168,7 @@ class ModelWatcher:
                 if slots:
                     n = slots[0].get("n_prompt_tokens")
                     if isinstance(n, int):
-                        key = self.sm.slot_key(self._find_g()) if self._find_g() else None
+                        key = self.sm.slot_key(g)
                         if key and self._last_prompt_tokens is not None:
                             # Sharp drop -> KV lost.
                             if n < self._last_prompt_tokens * 0.1:
@@ -170,11 +180,3 @@ class ModelWatcher:
                         self._last_prompt_tokens = n
             except Exception as e:
                 log.warning("reconcile_error: %s", e)
-
-
-class _dummy:
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *a):
-        return False

@@ -17,7 +17,8 @@ client ──▶ proxycache :8081 ──▶ llama.cpp (router) :30000 ──▶ 
 
 **Keying.** For each chat request the proxy renders the exact prompt the model will see
 (`/apply-template`), tokenizes it (`/tokenize`), and cuts the token stream into fixed blocks
-(256 tokens each), hashing every block. The conversation key is a hash of the rendered prefix.
+(256 tokens each), hashing every block. The conversation key is a hash of `(model, rendered prefix)` —
+the request's own model, so multi-model routers never cross-key.
 If the server endpoints are unavailable it falls back to word blocks.
 
 **Matching (LCP).** A restore candidate is the saved key sharing the longest common block prefix,
@@ -64,7 +65,8 @@ host = "0.0.0.0"
 port = 8081
 
 [model]
-id = "27B-Q3.8"               # model name the router routes on
+# Managed models; empty list = auto-discover all from /v1/models
+models = ["27B-Q3.8"]
 
 [[backends]]
 url = "http://127.0.0.1:30000"
@@ -88,7 +90,7 @@ No env vars, no CLI flags.
 | `server.log_level` | `INFO` | log level |
 | `server.request_timeout` | `600` | max seconds per proxied request |
 | `server.acquire_timeout` | `300` | max wait for a slot lock, then 503 |
-| `model.id` | `llama.cpp` | routing model name |
+| `model.models` | `[]` | managed models (empty = auto-discover all) |
 | `backends[].url` / `n_slots` | — | backend URL, fallback slot count |
 | `hashing.words_per_block` / `tokens_per_block` | `100` / `256` | block window size |
 | `hashing.big_threshold_words` / `big_threshold_tokens` | `500` / `300` | "big request" threshold |

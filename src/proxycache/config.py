@@ -31,8 +31,8 @@ request_timeout = 600.0
 acquire_timeout = 300.0
 
 [model]
-# Model name the router routes on; also sent in slot save/restore.
-id = "llama.cpp"
+# Models to manage (router mode). Empty list = auto-discover all from /v1/models.
+models = []
 
 # One entry per llama.cpp backend (router or single-model server).
 [[backends]]
@@ -89,7 +89,7 @@ REQUEST_TIMEOUT = float(_cfg["server"]["request_timeout"])
 ACQUIRE_TIMEOUT = float(_cfg["server"]["acquire_timeout"])
 
 # --- model -----------------------------------------------------------------
-MODEL_ID = _cfg["model"]["id"]
+MODELS: list = list(_cfg["model"].get("models", []))
 
 # --- backends ---------------------------------------------------------------
 # Mutable list of dicts; slot discovery updates n_slots at startup.

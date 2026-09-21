@@ -37,7 +37,7 @@ from .config import (
     BIG_THRESHOLD_WORDS,
     BIG_THRESHOLD_TOKENS,
     LCP_TH,
-    MODEL_ID,
+    MODELS,
     SAVE_MIN_INTERVAL,
     TOKENS_PER_BLOCK,
     WORDS_PER_BLOCK,
@@ -111,7 +111,8 @@ async def passthrough(req: Request):
         return await chat(req)
 
     clients = app.state.clients
-    client_model = MODEL_ID
+    managed: List[str] = app.state.models
+    client_model = managed[0] if managed else ""
 
     # /slots/{id}?action=save|restore — inject model (router requires it).
     if (
@@ -164,19 +165,31 @@ async def passthrough(req: Request):
 async def _startup():
     clients = [LlamaClient(be["url"]) for be in BACKENDS]
 
-    # P2: slot discovery — the server's /slots is the truth, env is fallback.
+    # Model resolution: config list wins; empty = auto-discover all.
+    models: List[str] = list(MODELS)
+    if not models:
+        models = await clients[0].get_models()
+        log.info("models_autodiscover %s", models)
+    if not models:
+        log.warning("models_empty — router save/restore injection disabled")
+    app.state.models = models
+
+    # P2: slot discovery — the server's /slots is the truth, config is fallback.
     for be_id, client in enumerate(clients):
-        slots = await client.get_slots(model=MODEL_ID)
-        if slots:
-            n = len(slots)
-            if n != int(BACKENDS[be_id]["n_slots"]):
-                log.info(
-                    "slot_discovery be=%d env_n_slots=%d server_n_slots=%d",
-                    be_id,
-                    BACKENDS[be_id]["n_slots"],
-                    n,
-                )
-            BACKENDS[be_id]["n_slots"] = n
+        for m in models:
+            slots = await client.get_slots(model=m)
+            if slots:
+                n = len(slots)
+                if n != int(BACKENDS[be_id]["n_slots"]):
+                    log.info(
+                        "slot_discovery be=%d model=%s cfg_n_slots=%d server_n_slots=%d",
+                        be_id,
+                        m,
+                        BACKENDS[be_id]["n_slots"],
+                        n,
+                    )
+                BACKENDS[be_id]["n_slots"] = n
+                break
 
     sm = SlotManager()
     sm.set_clients(clients)
@@ -185,14 +198,17 @@ async def _startup():
     app.state.receipts = Receipts()
     app.state.index = MetaIndex()
 
-    # B2/EV: model lifecycle watcher per backend.
+    # B2/EV: model lifecycle watcher per backend (all managed models).
     watchers: List[ModelWatcher] = []
     for be_id, client in enumerate(clients):
-        w = ModelWatcher(be_id, client, sm, model=MODEL_ID)
+        w = ModelWatcher(be_id, client, sm, models=models)
         watchers.append(w)
         await w.start()
     app.state.watchers = watchers
-    log.info("app_start n_backends=%d port=%d", len(BACKENDS), PORT)
+    log.info(
+        "app_start n_backends=%d models=%s port=%d",
+        len(BACKENDS), models, PORT,
+    )
 
 
 async def _shutdown():
@@ -317,10 +333,11 @@ async def chat(req: Request):
 
     messages: List[Dict] = data.get("messages") or []
     stream = bool(data.get("stream", False))
-    client_model = data.get("model") or MODEL_ID
+    managed: List[str] = app.state.models
+    client_model = data.get("model") or (managed[0] if managed else "")
 
-    # model_id from the first backend (keying identity)
-    backend_model_id = await clients[0].get_model_id()
+    # Key identity includes the request's own model (multi-model safe).
+    backend_model_id = client_model
 
     # A2: hash what the model actually sees — server-rendered prompt
     # tokenized into token blocks. Falls back to raw word blocks when

@@ -16,7 +16,7 @@ HTTP client for llama.cpp: /v1/chat/completions (stream/non-stream),
 
 import httpx
 import logging
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .config import REQUEST_TIMEOUT
 
@@ -243,24 +243,22 @@ class LlamaClient:
             return None
         return resp
 
-    async def get_model_id(self) -> str:
-        """
-        Fetch the model id from this llama.cpp via /v1/models.
-
-        Used only for internal keying (file/meta names); the proxy still
-        reports its configured MODEL_ID outward.
-        """
+    async def get_models(self) -> List[str]:
+        """All model ids from /v1/models (empty on failure)."""
         try:
             resp = await self.client.get("/v1/models")
             resp.raise_for_status()
             data = resp.json()
-            models = data.get("data") or []
-            if models and isinstance(models[0], dict):
-                mid = models[0].get("id") or "unknown"
-            else:
-                mid = "unknown"
-            log.debug("get_model_id base_url=%s id=%s", self.base_url, mid)
-            return mid
+            return [
+                m["id"] for m in (data.get("data") or []) if isinstance(m, dict)
+            ]
         except Exception as e:
-            log.warning("get_model_id_fail base_url=%s err=%s", self.base_url, e)
-            return "unknown"
+            log.warning("get_models_failed: %s", e)
+            return []
+
+    async def get_model_id(self) -> str:
+        """
+        Fetch the first model id from /v1/models (empty string on failure).
+        """
+        models = await self.get_models()
+        return models[0] if models else ""
