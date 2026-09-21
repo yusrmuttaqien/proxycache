@@ -21,6 +21,7 @@ Notes:
 
 import asyncio
 import json
+import os
 import re
 import time
 import logging
@@ -37,8 +38,10 @@ from .config import (
     BIG_THRESHOLD_WORDS,
     BIG_THRESHOLD_TOKENS,
     LCP_TH,
+    META_DIR,
     MODELS,
     SAVE_MIN_INTERVAL,
+    SAVE_PATH,
     TOKENS_PER_BLOCK,
     WORDS_PER_BLOCK,
     PORT,
@@ -165,6 +168,14 @@ async def passthrough(req: Request):
 async def _startup():
     clients = [LlamaClient(be["url"]) for be in BACKENDS]
 
+    # Tip-keeping: resolve the llama host's --slot-save-path (config override,
+    # else auto-detect from GET /models) so superseded .bin files can be removed.
+    save_path = SAVE_PATH
+    if not save_path and clients:
+        save_path = await clients[0].get_slot_save_path()
+    app.state.save_path = save_path
+    log.info("save_path %s", save_path or "(none — .bin tip-keeping disabled)")
+
     # Model resolution: config list wins; empty = auto-discover all.
     models: List[str] = list(MODELS)
     if not models:
@@ -225,6 +236,26 @@ async def _shutdown():
         await asyncio.gather(*(c.close() for c in clients))
 
 
+def _supersede_tip(old_key: str) -> None:
+    """Remove a key whose .bin/.meta.json are strictly implied by a newer
+    pure-extension save (tip-keeping: a growing chat keeps one rolling .bin).
+    """
+    index: MetaIndex = app.state.index
+    save_path: str = app.state.save_path
+    index.remove(old_key)
+    paths = []
+    if save_path:
+        paths.append(os.path.join(save_path, f"{old_key}.bin"))
+    paths.append(os.path.join(META_DIR, f"{old_key}.meta.json"))
+    for path in paths:
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+                log.info("tip_superseded key=%s path=%s", old_key[:16], path)
+        except Exception as e:
+            log.warning("tip_supersede_fail key=%s path=%s: %s", old_key[:16], path, e)
+
+
 async def start_stream_task(
     resp: httpx.Response,
     g: GSlot,
@@ -236,6 +267,7 @@ async def start_stream_task(
     model_id: str,
     route_model: str,
     sm: SlotManager,
+    tip_old: Optional[str] = None,
 ) -> AsyncGenerator[bytes, None]:
     queue: asyncio.Queue[Optional[bytes]] = asyncio.Queue(maxsize=STREAM_QUEUE_SIZE)
     receipts: Receipts = app.state.receipts
@@ -294,6 +326,10 @@ async def start_stream_task(
                     log.warning("save_after_exception g=%s key=%s: %s", g, key[:16], e)
             else:
                 log.info("save_skip_fuse key=%s", key[:16])
+            # Tip-keeping: the new key is a pure extension of tip_old — the
+            # old snapshot is strictly redundant now that this save succeeded.
+            if ok and tip_old:
+                _supersede_tip(tip_old)
             try:
                 app.state.index.write(key, prefix, blocks, wpb, model_id, unit)
             except Exception as e:
@@ -419,6 +455,9 @@ async def chat(req: Request):
     # pure prefix of the new one -> persist the old key before we overwrite.
     cur_key = sm.slot_key(g)
     cur_meta = index.get(cur_key) if cur_key else None
+    # tip_old: the key this request extends — its .bin is superseded once
+    # this request's own save succeeds (tip-keeping).
+    tip_old: Optional[str] = None
     if cur_key and cur_key != key and cur_meta:
         ext = False
         if cur_meta.get("unit", "words") == unit:
@@ -426,6 +465,8 @@ async def chat(req: Request):
             lcp = hs.lcp_blocks(blocks, cur_blocks)
             denom = max(1, min(len(blocks), len(cur_blocks)))
             ext = (lcp / denom >= LCP_TH) and len(cur_blocks) <= len(blocks)
+        if ext:
+            tip_old = cur_key
         if not ext and sm.save_allowed(cur_key, SAVE_MIN_INTERVAL):
             log.info("pre_save g=%s old_key=%s", g, cur_key[:16])
             try:
@@ -502,6 +543,7 @@ async def chat(req: Request):
                 backend_model_id,
                 client_model,
                 sm,
+                tip_old,
             )
 
             headers = {
@@ -558,6 +600,8 @@ async def chat(req: Request):
                         log.warning("save_after_exception g=%s key=%s: %s", g, key[:16], e)
                 else:
                     log.info("save_skip_fuse key=%s", key[:16])
+                if ok and tip_old:
+                    _supersede_tip(tip_old)
                 try:
                     index.write(
                         key,
