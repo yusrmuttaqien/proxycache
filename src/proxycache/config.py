@@ -53,10 +53,15 @@ big_threshold_tokens = 300
 lcp_threshold = 0.6
 
 [meta]
-# Where .meta.json files live (usually the llama host's --slot-save-path).
+# Where .meta.json files live (proxy-local bookkeeping).
 dir = "./kv_meta"
-# In-memory index cap; oldest meta is evicted (meta GC).
+# In-memory index cap; oldest meta is evicted on write. 0 = no cap
+# (manage manually with: python proxycache.py --gc N --by created|unused).
 max_entries = 32
+# The llama host's --slot-save-path (where .bin KV files live), used by
+# --gc to delete .bin alongside .meta.json. Empty = auto-detect from
+# GET /models (the instance's command line).
+save_path = ""
 
 
 [saves]
@@ -113,7 +118,8 @@ _META_DIR = _cfg["meta"]["dir"]
 META_DIR = _META_DIR if os.path.isabs(_META_DIR) else os.path.join(_ROOT, _META_DIR)
 os.makedirs(META_DIR, exist_ok=True)
 META_MAX_ENTRIES = int(_cfg["meta"]["max_entries"])
-META_MAX_ENTRIES = int(_cfg["meta"]["max_entries"])
+# The llama host's --slot-save-path; empty = auto-detect from GET /models.
+SAVE_PATH = _cfg["meta"].get("save_path", "")
 
 # --- saves ---------------------------------------------------------------------
 SAVE_MIN_INTERVAL = float(_cfg["saves"]["min_interval"])

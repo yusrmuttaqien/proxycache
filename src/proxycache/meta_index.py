@@ -36,6 +36,7 @@ class MetaIndex:
             key = meta.get("key")
             if key:
                 self._metas[key] = meta
+        self._enforce_cap()
         log.info("meta_index_loaded n=%d", len(self._metas))
 
     def write(
@@ -49,6 +50,7 @@ class MetaIndex:
     ) -> None:
         """Disk meta + index in one step."""
         import json
+        now = time.time()
         meta = {
             "key": key,
             "model_id": model_id,
@@ -56,7 +58,8 @@ class MetaIndex:
             "wpb": wpb,
             "unit": unit,
             "blocks": blocks,
-            "timestamp": time.time(),
+            "timestamp": now,
+            "last_used": now,
         }
         path = os.path.join(config.META_DIR, f"{key}.meta.json")
         with open(path, "w", encoding="utf-8") as f:
@@ -67,6 +70,20 @@ class MetaIndex:
     def update(self, key: str, meta: dict) -> None:
         self._metas[key] = meta
         self._enforce_cap()
+
+    def touch_used(self, key: str) -> None:
+        """Record a restore hit: bump last_used (memory + disk)."""
+        meta = self._metas.get(key)
+        if meta is None:
+            return
+        meta["last_used"] = time.time()
+        path = os.path.join(config.META_DIR, f"{key}.meta.json")
+        try:
+            import json
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(meta, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            log.warning("meta_touch_fail key=%s: %s", key[:16], e)
 
     def remove(self, key: str) -> None:
         self._metas.pop(key, None)
@@ -104,6 +121,8 @@ class MetaIndex:
         return (best_key, best_ratio) if best_key else None
 
     def _enforce_cap(self) -> None:
+        if self.max_entries <= 0:
+            return  # cap disabled (manual --gc management)
         while len(self._metas) > self.max_entries:
             oldest = min(self._metas.values(), key=lambda m: m.get("timestamp", 0))
             key = oldest.get("key")

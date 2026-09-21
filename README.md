@@ -41,7 +41,8 @@ Shutdown (SIGTERM) saves every occupied slot.
 
 **Receipts & GC.** Every response records its reuse ratio (`cache_n / (cache_n + prompt_n)`).
 A key whose last two receipts show ~0 reuse is pruned from the index (its `.bin` stays on disk
-until a size GC). The meta index is capped (`max_entries`); oldest meta is evicted.
+along with its `.bin` when the save path is reachable). The meta index can also be capped
+(`max_entries`, `0` = no cap) — manual eviction: `python proxycache.py --gc N --by created|unused`.
 
 **Pass-through.** Everything else — `/v1/models`, `/props`, `/health`, `/metrics`, the Web UI,
 tools, embeddings, anything — is forwarded raw. The proxy injects the `model` field into
@@ -94,9 +95,24 @@ No env vars, no CLI flags.
 | `hashing.words_per_block` / `tokens_per_block` | `100` / `256` | block window size |
 | `hashing.big_threshold_words` / `big_threshold_tokens` | `500` / `300` | "big request" threshold |
 | `hashing.lcp_threshold` | `0.6` | min LCP ratio to restore |
-| `meta.dir` | `./kv_meta` | meta directory (put it on the llama host) |
-| `meta.max_entries` | `32` | index cap, oldest evicted |
+| `meta.dir` | `./kv_meta` | meta directory (proxy-local) |
+| `meta.max_entries` | `32` | index cap, oldest evicted (`0` = no cap) |
+| `meta.save_path` | `""` | llama host's `--slot-save-path`; empty = auto-detect from `GET /models` |
 | `saves.min_interval` | `10` | seconds between saves of the same key |
+
+## Manual GC
+
+One-shot eviction, no server needed:
+
+```sh
+python proxycache.py --gc 8 --by created --dry-run   # preview
+python proxycache.py --gc 8 --by unused              # evict 8 longest-unused
+```
+
+For each evicted key it deletes `{meta.dir}/{key}.meta.json` and
+`{save_path}/{key}.bin` (the save path is auto-detected from `GET /models`
+unless `meta.save_path` overrides it; `.bin` deletion is skipped when the
+path is unreachable — e.g. proxy and llama on different machines).
 
 ## Endpoints
 

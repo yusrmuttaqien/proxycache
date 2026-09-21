@@ -256,6 +256,26 @@ class LlamaClient:
             log.warning("get_models_failed: %s", e)
             return []
 
+    async def get_slot_save_path(self) -> str:
+        """The instance's --slot-save-path from GET /models (empty on failure).
+
+        The model status carries the full command line (status.args), which
+        includes --slot-save-path <dir> — the directory where .bin KV files
+        live on the llama host.
+        """
+        try:
+            resp = await self.client.get("/models")
+            data = resp.json()
+        except Exception as e:
+            log.warning("save_path_fetch_fail: %s", e)
+            return ""
+        for m in data.get("data", []):
+            args = (m.get("status") or {}).get("args") or []
+            for i, a in enumerate(args):
+                if a == "--slot-save-path" and i + 1 < len(args):
+                    return args[i + 1]
+        return ""
+
     async def get_model_id(self) -> str:
         """
         Fetch the first model id from /v1/models (empty string on failure).

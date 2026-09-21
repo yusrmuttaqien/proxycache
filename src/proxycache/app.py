@@ -436,12 +436,16 @@ async def chat(req: Request):
             except Exception as e:
                 log.warning("pre_save_exception g=%s key=%s: %s", g, cur_key[:16], e)
 
+    if cur_key == key:
+        index.touch_used(key)  # slot already holds this key: a reuse hit
+
     restored: Optional[bool] = None
     if is_big and restore_key:
         _count("restore_attempts_total")
         restored = await sm.restore(g, restore_key, client_model)
         if restored:
             _count("restore_ok_total")
+            index.touch_used(restore_key)
 
     log.info("after_acquire g=%s restored=%s cur_key=%s", g, restored,
              cur_key[:16] if cur_key else None)
