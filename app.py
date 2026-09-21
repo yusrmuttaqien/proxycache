@@ -21,6 +21,7 @@ Notes:
 
 import asyncio
 import json
+import re
 import time
 import logging
 from typing import List, Dict, AsyncGenerator, Optional
@@ -76,6 +77,75 @@ async def metrics():
     return "\n".join(lines) + "\n"
 
 
+HOP_BY_HOP = {
+    "host", "content-length", "connection", "transfer-encoding",
+    "keep-alive", "te", "trailer", "upgrade",
+}
+
+
+@app.api_route(
+    "/{path:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+)
+async def passthrough(req: Request):
+    """P1: byte-for-byte pass-through to the backend.
+
+    Interception points:
+    - POST /v1/chat/completions is a separate explicit route (the watch);
+    - POST /slots/{id}?action=save|restore gets model injected into the body;
+    - everything else (health, props, models, tools, Web UI, ...) is raw.
+    """
+    path = req.url.path
+
+    # The watch: explicit route logic.
+    if req.method == "POST" and path == "/v1/chat/completions":
+        return await chat(req)
+
+    clients = app.state.clients
+    client_model = MODEL_ID
+
+    # /slots/{id}?action=save|restore — inject model (router requires it).
+    if (
+        req.method == "POST"
+        and re.match(r"^/slots/\d+", path)
+        and req.url.query in ("action=save", "action=restore")
+    ):
+        raw = await req.body()
+        try:
+            body = json.loads(raw)
+            if "model" not in body:
+                body["model"] = client_model
+                raw = json.dumps(body).encode("utf-8")
+        except Exception:
+            pass
+    else:
+        raw = await req.body()
+
+    url = path + (f"?{req.url.query}" if req.url.query else "")
+    headers = {
+        k: v for k, v in req.headers.items() if k.lower() not in HOP_BY_HOP
+    }
+
+    http = clients[0].client
+    response = await http.send(
+        http.build_request(req.method, url, content=raw, headers=headers),
+        stream=True,
+    )
+
+    resp_headers = {
+        k: v for k, v in response.headers.items() if k.lower() not in HOP_BY_HOP
+    }
+
+    async def gen():
+        try:
+            async for chunk in response.aiter_raw():
+                yield chunk
+        finally:
+            await response.aclose()
+
+    return StreamingResponse(gen(), status_code=response.status_code, headers=resp_headers)
+
+
 @app.on_event("startup")
 async def startup():
     clients = [LlamaClient(be["url"]) for be in BACKENDS]
@@ -124,11 +194,6 @@ async def shutdown():
     clients: List[LlamaClient] = getattr(app.state, "clients", [])
     if clients:
         await asyncio.gather(*(c.close() for c in clients))
-
-
-@app.get("/v1/models")
-async def models():
-    return {"data": [{"id": MODEL_ID}]}
 
 
 async def start_stream_task(
@@ -229,7 +294,6 @@ async def start_stream_task(
     return gen()
 
 
-@app.post("/v1/chat/completions")
 async def chat(req: Request):
     sm: SlotManager = app.state.sm
     clients: List[LlamaClient] = app.state.clients
@@ -296,9 +360,9 @@ async def chat(req: Request):
             log.info("restore_candidate none")
     else:
         log.info(
-            "small_request n_words=%d threshold=%d",
-            n_words,
-            BIG_THRESHOLD_WORDS,
+            "small_request unit=%s n_units~%d",
+            unit,
+            len(blocks) * wpb,
         )
 
     log.info(
