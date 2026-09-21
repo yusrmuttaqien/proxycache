@@ -46,7 +46,8 @@ along with its `.bin` when the save path is reachable). The meta index can also 
 
 **Pass-through.** Everything else — `/v1/models`, `/props`, `/health`, `/metrics`, the Web UI,
 tools, embeddings, anything — is forwarded raw. The proxy injects the `model` field into
-`POST /slots/{id}?action=save|restore` (required in router mode).
+`POST /slots/{id}?action=save|restore` (required in router mode), and intercepts
+`POST /models/unload` to save the slot's current key first (zero-loss graceful unload).
 
 ## Quick start
 

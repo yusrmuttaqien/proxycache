@@ -95,6 +95,39 @@ HOP_BY_HOP = {
 }
 
 
+async def _preunload_save(raw: bytes) -> None:
+    """POST /models/unload: persist the slot's current key before the KV dies.
+
+    Converts the graceful-unload case from bounded loss to zero loss; the
+    saved state is what the next chat restores. Skip when the slot is busy
+    (same tradeoff as the watcher's preemptive save).
+    """
+    try:
+        m = json.loads(raw).get("model")
+    except Exception:
+        return
+    if not m:
+        return
+    sm: SlotManager = app.state.sm
+    for g in sm._all_slots:
+        if sm._slot_models.get(g) != m:
+            continue
+        key = sm.slot_key(g)
+        if not key:
+            return
+        lock = sm._locks[g]
+        if lock.locked():
+            log.warning("preunload_save_skip_locked model=%s key=%s", m, key[:16])
+            return
+        await lock.acquire()
+        try:
+            ok = await sm.save_after(g, key, m)
+            log.info("preunload_save model=%s key=%s ok=%s", m, key[:16], ok)
+        finally:
+            sm.release(g)
+        return
+
+
 @app.api_route(
     "/{path:path}",
     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
@@ -131,6 +164,12 @@ async def passthrough(req: Request):
                 raw = json.dumps(body).encode("utf-8")
         except Exception:
             pass
+    elif req.method == "POST" and path == "/models/unload":
+        raw = await req.body()
+        try:
+            await _preunload_save(raw)
+        except Exception as e:
+            log.warning("preunload_save_fail: %s", e)
     else:
         raw = await req.body()
 
