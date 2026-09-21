@@ -29,13 +29,11 @@ import json
 import logging
 from typing import List, Optional
 
+from . import config
 from .slot_manager import SlotManager
 from .llama_client import LlamaClient
 
 log = logging.getLogger(__name__)
-
-RECONCILE_INTERVAL = 20.0
-SSE_RECONNECT_BACKOFF = 5.0
 
 
 class ModelWatcher:
@@ -58,7 +56,7 @@ class ModelWatcher:
         ]
 
     async def _sse_loop(self):
-        backoff = SSE_RECONNECT_BACKOFF
+        backoff = config.SSE_RECONNECT_BACKOFF
         while not self._stop:
             resp = await self.client.models_sse()
             if resp is None:
@@ -150,7 +148,7 @@ class ModelWatcher:
 
     async def _reconcile_loop(self):
         while not self._stop:
-            await asyncio.sleep(RECONCILE_INTERVAL)
+            await asyncio.sleep(config.RECONCILE_INTERVAL)
             try:
                 # Track only the model the slot currently holds.
                 g = self._find_g()
@@ -171,7 +169,7 @@ class ModelWatcher:
                         key = self.sm.slot_key(g)
                         if key and self._last_prompt_tokens is not None:
                             # Sharp drop -> KV lost.
-                            if n < self._last_prompt_tokens * 0.1:
+                            if n < self._last_prompt_tokens * config.KV_DROP_RATIO:
                                 log.info(
                                     "reconcile_kv_drop n=%d was=%d",
                                     n, self._last_prompt_tokens,

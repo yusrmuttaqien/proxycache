@@ -29,9 +29,6 @@ from . import config
 
 log = logging.getLogger(__name__)
 
-STALE_WINDOW = 2      # how many recent receipts to inspect
-STALE_RATIO = 0.2     # below this reuse ratio the key is considered dead
-
 
 class Receipts:
     def __init__(self):
@@ -43,16 +40,16 @@ class Receipts:
         s = self._stats.setdefault(key, {"ratios": [], "last": 0.0})
         s["ratios"].append(ratio)
         s["last"] = time.time()
-        s["ratios"] = s["ratios"][-STALE_WINDOW:]
+        s["ratios"] = s["ratios"][-config.STALE_WINDOW:]
         log.debug("receipt key=%s cache_n=%d prompt_n=%d ratio=%.2f",
                   key[:16], cache_n, prompt_n, ratio)
         return ratio
 
     def is_stale(self, key: str) -> bool:
         s = self._stats.get(key)
-        if not s or len(s["ratios"]) < STALE_WINDOW:
+        if not s or len(s["ratios"]) < config.STALE_WINDOW:
             return False
-        return all(r < STALE_RATIO for r in s["ratios"][-STALE_WINDOW:])
+        return all(r < config.STALE_RATIO for r in s["ratios"][-config.STALE_WINDOW:])
 
     def forget(self, key: str) -> None:
         self._stats.pop(key, None)

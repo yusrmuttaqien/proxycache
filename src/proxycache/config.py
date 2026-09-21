@@ -67,6 +67,21 @@ max_entries = 32
 [saves]
 # Min seconds between saves of the same key (cost fuse).
 min_interval = 10.0
+
+[watcher]
+# Seconds between reconciler polls (KV-loss detection by polling).
+reconcile_interval = 20.0
+# Initial delay between SSE reconnects (doubles each retry, capped at 60s).
+sse_reconnect_backoff = 5.0
+# A slot is marked cold if its token count drops below this fraction of
+# the last-seen value (in-model KV loss, e.g. RAM eviction).
+kv_drop_ratio = 0.1
+
+[receipts]
+# A key is stale (pruned) if its last `window` receipts all show a reuse
+# ratio below `ratio` (its saved cache is probably dead).
+window = 2
+ratio = 0.2
 """
 
 log = logging.getLogger(__name__)
@@ -123,6 +138,15 @@ SAVE_PATH = _cfg["meta"].get("save_path", "")
 
 # --- saves ---------------------------------------------------------------------
 SAVE_MIN_INTERVAL = float(_cfg["saves"]["min_interval"])
+
+# --- watcher ---------------------------------------------------------------
+RECONCILE_INTERVAL = float(_cfg["watcher"]["reconcile_interval"])
+SSE_RECONNECT_BACKOFF = float(_cfg["watcher"]["sse_reconnect_backoff"])
+KV_DROP_RATIO = float(_cfg["watcher"]["kv_drop_ratio"])
+
+# --- receipts ---------------------------------------------------------------
+STALE_WINDOW = int(_cfg["receipts"]["window"])
+STALE_RATIO = float(_cfg["receipts"]["ratio"])
 
 logging.basicConfig(
     level=LOG_LEVEL.upper(),
