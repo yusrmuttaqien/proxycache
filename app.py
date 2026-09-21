@@ -23,6 +23,7 @@ Simple KV Proxy (бронебойный):
 """
 
 import asyncio
+import json
 import time
 import logging
 from typing import List, Dict, AsyncGenerator, Optional
@@ -41,6 +42,7 @@ from config import (
 )
 import hashing as hs
 from llama_client import LlamaClient
+from receipts import Receipts
 from slot_manager import SlotManager, GSlot
 
 log = logging.getLogger(__name__)
@@ -58,6 +60,7 @@ async def startup():
     sm.set_clients(clients)
     app.state.clients = clients
     app.state.sm = sm
+    app.state.receipts = Receipts()
     log.info("app_start n_backends=%d port=%d", len(BACKENDS), PORT)
 
 
@@ -90,13 +93,27 @@ async def start_stream_task(
     sm: SlotManager,
 ) -> AsyncGenerator[bytes, None]:
     queue: asyncio.Queue[Optional[bytes]] = asyncio.Queue(maxsize=STREAM_QUEUE_SIZE)
+    receipts: Receipts = app.state.receipts
 
     async def reader():
+        last_json: Optional[Dict] = None
         try:
             log.info("stream_reader_start g=%s key=%s", g, key[:16])
             async for chunk in resp.aiter_raw():
                 if not chunk:
                     continue
+                # A1: ищем последний JSON-чанк с timings (финальный SSE).
+                for line in chunk.decode("utf-8", "ignore").splitlines():
+                    line = line.strip()
+                    if line.startswith("data:"):
+                        payload = line[5:].strip()
+                        if payload and payload != "[DONE]":
+                            try:
+                                obj = json.loads(payload)
+                                if isinstance(obj, dict) and ("timings" in obj or "usage" in obj):
+                                    last_json = obj
+                            except Exception:
+                                pass
                 try:
                     await queue.put(chunk)
                 except asyncio.CancelledError:
@@ -108,6 +125,17 @@ async def start_stream_task(
         except Exception as e:
             log.exception("stream_reader_error g=%s key=%s: %s", g, key[:16], e)
         finally:
+            # A1: чек повторного использования KV.
+            if last_json is not None:
+                try:
+                    timings = last_json.get("timings") or {}
+                    cache_n = int(timings.get("cache_n") or 0)
+                    prompt_n = int(timings.get("prompt_n") or 0)
+                    receipts.record(key, cache_n, prompt_n)
+                    if receipts.is_stale(key):
+                        receipts.prune_stale([key])
+                except Exception as e:
+                    log.warning("receipt_stream_fail key=%s: %s", key[:16], e)
             try:
                 await resp.aclose()
             except Exception:
@@ -287,6 +315,19 @@ async def chat(req: Request):
                     {"error": "provider non-JSON body"},
                     status_code=502,
                 )
+
+            receipts: Receipts = app.state.receipts
+            timings = out.get("timings") or {}
+            try:
+                receipts.record(
+                    key,
+                    int(timings.get("cache_n") or 0),
+                    int(timings.get("prompt_n") or 0),
+                )
+                if receipts.is_stale(key):
+                    receipts.prune_stale([key])
+            except Exception as e:
+                log.warning("receipt_fail key=%s: %s", key[:16], e)
 
             ok = False
             if is_big:

@@ -151,25 +151,3 @@ def write_meta(
     with open(path, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2, ensure_ascii=False)
 
-
-def touch_meta(key: str) -> None:
-    """
-    Обновляет timestamp в существующем meta-файле key.meta.json.
-    """
-    path = os.path.join(META_DIR, f"{key}.meta.json")
-    try:
-        with open(path, "r+", encoding="utf-8") as f:
-            try:
-                meta = json.load(f)
-            except Exception as e:
-                log.warning("touch_meta_read_fail key=%s: %s", key[:16], e)
-                return
-            meta["timestamp"] = time.time()
-            f.seek(0)
-            json.dump(meta, f, indent=2, ensure_ascii=False)
-            f.truncate()
-        log.debug("touch_meta_ok key=%s", key[:16])
-    except FileNotFoundError:
-        log.warning("touch_meta_missing key=%s", key[:16])
-    except Exception as e:
-        log.warning("touch_meta_fail key=%s: %s", key[:16], e)
