@@ -8,6 +8,10 @@
 - get_slot(): сначала свободный (ещё не использовался), иначе самый старый по времени.
 - Для big: если есть restore_key — делаем restore на выбранный слот.
 - Сохранение всегда после завершения запроса.
+
+Явная таблица слот→key (_slot_keys): обновляется ТОЛЬКО при реальном
+успешном save/restore. Это единственное доверенное представление о том,
+что лежит в слоте (см. upgrade.md B1).
 """
 
 import time
@@ -43,6 +47,11 @@ class SlotManager:
             g: asyncio.Lock() for g in self._all_slots
         }
 
+        # B1: явная таблица «в слоте лежит key K» — только на основе
+        # подтверждённых save/restore. model_id храним вместе с key.
+        self._slot_keys: Dict[GSlot, str] = {}
+        self._slot_models: Dict[GSlot, str] = {}
+
         log.info(
             "slot_manager n_backends=%d total_slots=%d",
             len(self.backends),
@@ -68,6 +77,7 @@ class SlotManager:
     async def acquire_for_request(
         self,
         restore_key: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> Tuple[GSlot, asyncio.Lock, Optional[bool]]:
         g, lock = self._get_free_or_oldest()
         await lock.acquire()
@@ -75,21 +85,61 @@ class SlotManager:
         restored: Optional[bool] = None
         if restore_key:
             client = self.backends[g[0]]["client"]
-            restored = await client.restore_slot(g[1], restore_key)
+            restored = await client.restore_slot(g[1], restore_key, model)
             log.info(
                 "restore_before_chat g=%s key=%s ok=%s",
                 g,
                 (restore_key[:16] if restore_key else None),
                 restored,
             )
+            if restored:
+                self._slot_keys[g] = restore_key
+                if model:
+                    self._slot_models[g] = model
 
         return g, lock, restored
 
-    async def save_after(self, g: GSlot, key: str) -> bool:
+    async def save_after(
+        self,
+        g: GSlot,
+        key: str,
+        model: Optional[str] = None,
+    ) -> bool:
         client = self.backends[g[0]]["client"]
-        ok = await client.save_slot(g[1], key)
+        ok = await client.save_slot(g[1], key, model)
         self._last_used[g] = time.time()
+        if ok:
+            # Таблицу трогаем только при подтверждённом save.
+            self._slot_keys[g] = key
+            if model:
+                self._slot_models[g] = model
         return ok
+
+    def mark_cold(self, g: GSlot) -> None:
+        """KV в слоте потеряно (sleep/overflow/смена модели) — key живёт только на диске."""
+        self._slot_keys.pop(g, None)
+        self._slot_models.pop(g, None)
+
+    def slot_key(self, g: GSlot) -> Optional[str]:
+        return self._slot_keys.get(g)
+
+    async def shutdown_save(self) -> None:
+        """SIGTERM-сохранение: сохраним текущий key каждого занятого слота."""
+        for g, key in list(self._slot_keys.items()):
+            model = self._slot_models.get(g)
+            try:
+                lock = self._locks[g]
+                if lock.locked():
+                    log.info("shutdown_save_skip_locked g=%s key=%s", g, key[:16])
+                    continue
+                await lock.acquire()
+                try:
+                    ok = await self.save_after(g, key, model)
+                    log.info("shutdown_save g=%s key=%s ok=%s", g, key[:16], ok)
+                finally:
+                    lock.release()
+            except Exception as e:
+                log.warning("shutdown_save_fail g=%s: %s", g, e)
 
     def release(self, g: GSlot):
         if self._locks[g].locked():

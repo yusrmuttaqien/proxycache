@@ -12,6 +12,8 @@ Simple KV Proxy (бронебойный):
 Дополнительно:
 
 - acquire_for_request обёрнут в таймаут, чтобы не висеть бесконечно, если слот не отпускается.
+- save/restore не фатальны для ответа (P0): ошибка сохранения не ломает чат.
+- shutdown: SIGTERM → сохраним текущий key каждого занятого слота.
 - Для stream:
     * чтение из llama.cpp идёт в отдельной фоновой задаче (reader);
     * reader пушит чанки в asyncio.Queue;
@@ -61,6 +63,12 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
+    sm: SlotManager = getattr(app.state, "sm", None)
+    if sm is not None:
+        try:
+            await sm.shutdown_save()
+        except Exception as e:
+            log.warning("shutdown_save_exception: %s", e)
     clients: List[LlamaClient] = getattr(app.state, "clients", [])
     if clients:
         await asyncio.gather(*(c.close() for c in clients))
@@ -78,6 +86,7 @@ async def start_stream_task(
     prefix: str,
     blocks: List[str],
     model_id: str,
+    route_model: str,
     sm: SlotManager,
 ) -> AsyncGenerator[bytes, None]:
     queue: asyncio.Queue[Optional[bytes]] = asyncio.Queue(maxsize=STREAM_QUEUE_SIZE)
@@ -105,7 +114,7 @@ async def start_stream_task(
                 pass
             ok = False
             try:
-                ok = await sm.save_after(g, key)
+                ok = await sm.save_after(g, key, route_model)
             except Exception as e:
                 log.warning("save_after_exception g=%s key=%s: %s", g, key[:16], e)
             try:
@@ -185,7 +194,10 @@ async def chat(req: Request):
 
     try:
         g, lock, restored = await asyncio.wait_for(
-            sm.acquire_for_request(restore_key if is_big else None),
+            sm.acquire_for_request(
+                restore_key if is_big else None,
+                model=client_model,
+            ),
             timeout=ACQUIRE_TIMEOUT,
         )
     except asyncio.TimeoutError:
@@ -249,6 +261,7 @@ async def chat(req: Request):
                 prefix,
                 blocks,
                 backend_model_id,
+                client_model,
                 sm,
             )
 
@@ -276,9 +289,12 @@ async def chat(req: Request):
                 )
 
             ok = False
-            try:
-                if is_big:
-                    ok = await sm.save_after(g, key)
+            if is_big:
+                try:
+                    ok = await sm.save_after(g, key, client_model)
+                except Exception as e:
+                    log.warning("save_after_exception g=%s key=%s: %s", g, key[:16], e)
+                try:
                     hs.write_meta(
                         key,
                         prefix,
@@ -286,8 +302,9 @@ async def chat(req: Request):
                         WORDS_PER_BLOCK,
                         backend_model_id,
                     )
-            finally:
-                sm.release(g)
+                except Exception as e:
+                    log.warning("write_meta_exception key=%s: %s", key[:16], e)
+            sm.release(g)
 
             log.info(
                 "json_done g=%s key=%s saved=%s is_big=%s dur_ms=%d",

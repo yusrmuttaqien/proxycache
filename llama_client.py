@@ -7,7 +7,8 @@ HTTP-клиент к llama.cpp: /v1/chat/completions (stream/non-stream), /slots
 
 - stream: build_request+send(stream=True), сырые байты.
 - non-stream: строгий JSON парсинг + fallback, если content-type не JSON.
-- /slots: filename в JSON-теле (во избежание 500 parse error).
+- /slots: filename + model в JSON-теле (router-режим требует model в теле,
+  query-параметр ?model= игнорируется).
 - Пин слота дублируется в root/options/query.
 - get_model_id(): получает текущий id модели с /v1/models.
 """
@@ -112,41 +113,66 @@ class LlamaClient:
                 "raw": raw[:2048],
             }
 
-    async def save_slot(self, slot_id: int, basename: str) -> bool:
-        # JSON body: {"filename": "..."} — иначе 500 на некоторых сборках
-        resp = await self.client.post(
-            f"/slots/{slot_id}",
-            params={"action": "save"},
-            json={"filename": basename},
-        )
-
-        if resp.status_code == 500:
-            log.warning(
-                "save_slot_500 slot=%d basename=%s",
-                slot_id,
-                basename[:16],
+    async def save_slot(
+        self,
+        slot_id: int,
+        basename: str,
+        model: Optional[str] = None,
+    ) -> bool:
+        # JSON body: {"filename": ..., "model": ...} — router-режим требует
+        # model в теле (query-параметр игнорируется); без model — 400.
+        payload: Dict = {"filename": basename}
+        if model:
+            payload["model"] = model
+        try:
+            resp = await self.client.post(
+                f"/slots/{slot_id}",
+                params={"action": "save"},
+                json=payload,
             )
+        except Exception as e:
+            log.warning("save_slot_transport slot=%d model=%s: %s", slot_id, model, e)
             return False
-
-        resp.raise_for_status()
-        return True
-
-    async def restore_slot(self, slot_id: int, basename: str) -> bool:
-        resp = await self.client.post(
-            f"/slots/{slot_id}",
-            params={"action": "restore"},
-            json={"filename": basename},
-        )
 
         if resp.status_code != 200:
             log.warning(
-                "restore_slot_status=%d slot=%d basename=%s",
+                "save_slot_status=%d slot=%d model=%s basename=%s",
                 resp.status_code,
                 slot_id,
+                model,
                 basename[:16],
             )
             return False
+        return True
 
+    async def restore_slot(
+        self,
+        slot_id: int,
+        basename: str,
+        model: Optional[str] = None,
+    ) -> bool:
+        payload: Dict = {"filename": basename}
+        if model:
+            payload["model"] = model
+        try:
+            resp = await self.client.post(
+                f"/slots/{slot_id}",
+                params={"action": "restore"},
+                json=payload,
+            )
+        except Exception as e:
+            log.warning("restore_slot_transport slot=%d model=%s: %s", slot_id, model, e)
+            return False
+
+        if resp.status_code != 200:
+            log.warning(
+                "restore_slot_status=%d slot=%d model=%s basename=%s",
+                resp.status_code,
+                slot_id,
+                model,
+                basename[:16],
+            )
+            return False
         return True
 
     async def get_model_id(self) -> str:
