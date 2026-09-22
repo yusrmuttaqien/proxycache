@@ -279,6 +279,29 @@ async def _shutdown():
         await asyncio.gather(*(c.close() for c in clients))
 
 
+def _keys_extended(blocks: List[str], unit: str) -> List[str]:
+    """Keys in the index that `blocks` purely extends (tip-keeping targets).
+
+    Scans the meta index, not just the slot's current key: in a ping-pong
+    (two chats alternating) the key being extended sits in the index while
+    the slot holds the other chat's key.
+    """
+    out: List[str] = []
+    for k in app.state.index.keys():
+        if not k:
+            continue
+        meta = app.state.index.get(k)
+        if meta is None or meta.get("unit", "words") != unit:
+            continue
+        ob = meta.get("blocks") or []
+        if not ob or len(ob) >= len(blocks):
+            continue
+        lcp = hs.lcp_blocks(blocks, ob)
+        if lcp / max(1, len(ob)) >= LCP_TH:
+            out.append(k)
+    return out
+
+
 def _supersede_tip(old_key: str) -> None:
     """Remove a key whose .bin/.meta.json are strictly implied by a newer
     pure-extension save (tip-keeping: a growing chat keeps one rolling .bin).
@@ -312,7 +335,6 @@ async def start_stream_task(
     model_id: str,
     route_model: str,
     sm: SlotManager,
-    tip_old: Optional[str] = None,
 ) -> AsyncGenerator[bytes, None]:
     queue: asyncio.Queue[Optional[bytes]] = asyncio.Queue(maxsize=STREAM_QUEUE_SIZE)
     receipts: Receipts = app.state.receipts
@@ -371,10 +393,11 @@ async def start_stream_task(
                     log.warning("save_after_exception g=%s key=%s: %s", g, key[:16], e)
             else:
                 log.info("save_skip_fuse key=%s", key[:16])
-            # Tip-keeping: the new key is a pure extension of tip_old — the
-            # old snapshot is strictly redundant now that this save succeeded.
-            if ok and tip_old:
-                _supersede_tip(tip_old)
+            # Tip-keeping: every indexed key this key purely extends is
+            # strictly redundant now that this save succeeded.
+            if ok:
+                for ext_key in _keys_extended(blocks, unit):
+                    _supersede_tip(ext_key)
             try:
                 app.state.index.write(key, prefix, blocks, wpb, model_id, unit)
             except Exception as e:
@@ -500,9 +523,8 @@ async def chat(req: Request):
     # pure prefix of the new one -> persist the old key before we overwrite.
     cur_key = sm.slot_key(g)
     cur_meta = index.get(cur_key) if cur_key else None
-    # tip_old: the key this request extends — its .bin is superseded once
-    # this request's own save succeeds (tip-keeping).
-    tip_old: Optional[str] = None
+    # Pre-eviction check: does the slot's current key extend into this
+    # request (pure prefix) -> no pre-save needed before overwriting.
     if cur_key and cur_key != key and cur_meta:
         ext = False
         if cur_meta.get("unit", "words") == unit:
@@ -510,8 +532,6 @@ async def chat(req: Request):
             lcp = hs.lcp_blocks(blocks, cur_blocks)
             denom = max(1, min(len(blocks), len(cur_blocks)))
             ext = (lcp / denom >= LCP_TH) and len(cur_blocks) <= len(blocks)
-        if ext:
-            tip_old = cur_key
         if not ext and sm.save_allowed(cur_key, SAVE_MIN_INTERVAL):
             log.info("pre_save g=%s old_key=%s", g, cur_key[:16])
             try:
@@ -588,7 +608,6 @@ async def chat(req: Request):
                 backend_model_id,
                 client_model,
                 sm,
-                tip_old,
             )
 
             headers = {
@@ -645,8 +664,9 @@ async def chat(req: Request):
                         log.warning("save_after_exception g=%s key=%s: %s", g, key[:16], e)
                 else:
                     log.info("save_skip_fuse key=%s", key[:16])
-                if ok and tip_old:
-                    _supersede_tip(tip_old)
+                if ok:
+                    for ext_key in _keys_extended(blocks, unit):
+                        _supersede_tip(ext_key)
                 try:
                     index.write(
                         key,
