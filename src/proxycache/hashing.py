@@ -25,6 +25,16 @@ from .config import WORDS_PER_BLOCK
 
 log = logging.getLogger(__name__)
 
+# Proxy .bin filename prefix. Distinguishes proxy-owned cache files from
+# llama.cpp's own --cache-idle-slots files (same --slot-save-path dir, both
+# 64-hex names) so the orphan sweep only touches proxy files.
+BIN_PREFIX = "pc_"
+
+
+def bin_name(key: str) -> str:
+    """The .bin filename for a key (pc_{key}.bin)."""
+    return f"{BIN_PREFIX}{key}.bin"
+
 
 def raw_prefix(messages: List[Dict]) -> str:
     parts = []

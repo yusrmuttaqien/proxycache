@@ -119,7 +119,8 @@ class LlamaClient:
         slot_id: int,
         basename: str,
         model: Optional[str] = None,
-    ) -> bool:
+    ) -> Tuple[bool, int]:
+        """Returns (ok, bytes_saved); bytes_saved is 0 on failure."""
         # JSON body: {"filename": ..., "model": ...} — router mode requires
         # model in the body (query param ignored); without it the router 400s.
         payload: Dict = {"filename": basename}
@@ -133,7 +134,7 @@ class LlamaClient:
             )
         except Exception as e:
             log.warning("save_slot_transport slot=%d model=%s: %s", slot_id, model, e)
-            return False
+            return (False, 0)
 
         if resp.status_code != 200:
             log.warning(
@@ -143,8 +144,12 @@ class LlamaClient:
                 model,
                 basename[:16],
             )
-            return False
-        return True
+            return (False, 0)
+        try:
+            n_saved = int(resp.json().get("n_saved", 0))
+        except Exception:
+            n_saved = 0
+        return (True, n_saved)
 
     async def restore_slot(
         self,

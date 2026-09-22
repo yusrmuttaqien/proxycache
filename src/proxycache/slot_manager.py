@@ -20,6 +20,7 @@ import logging
 from typing import List, Tuple, Dict, Optional
 
 from .config import BACKENDS
+from .hashing import bin_name
 
 log = logging.getLogger(__name__)
 
@@ -99,7 +100,7 @@ class SlotManager:
         model: Optional[str] = None,
     ) -> bool:
         client = self.backends[g[0]]["client"]
-        restored = await client.restore_slot(g[1], f"{restore_key}.bin", model)
+        restored = await client.restore_slot(g[1], bin_name(restore_key), model)
         log.info(
             "restore_before_chat g=%s key=%s ok=%s",
             g,
@@ -118,9 +119,10 @@ class SlotManager:
         key: str,
         model: Optional[str] = None,
         prefix_len: int = 0,
-    ) -> bool:
+    ) -> int:
+        """Returns bytes saved (0 = save failed)."""
         client = self.backends[g[0]]["client"]
-        ok = await client.save_slot(g[1], f"{key}.bin", model)
+        ok, n_saved = await client.save_slot(g[1], bin_name(key), model)
         self._last_used[g] = time.time()
         if ok:
             # Table is updated only on a confirmed save.
@@ -129,7 +131,7 @@ class SlotManager:
                 self._slot_models[g] = model
             self._saved_len[g] = prefix_len
             self._note_save(key)
-        return ok
+        return n_saved if ok else 0
 
     def saved_len(self, g: GSlot) -> int:
         return self._saved_len.get(g, 0)

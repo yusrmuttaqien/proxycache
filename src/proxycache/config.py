@@ -61,6 +61,9 @@ max_entries = 32
 # Which meta the cap evicts: "created" (oldest created) or "unused"
 # (longest unused, like --gc --by unused). Absent = "created".
 # max_entries_policy = "created"
+# Max total size of .bin files (GB). 0 = no cap. Uses the same
+# policy as max_entries (max_entries_policy).
+# max_size_gb = 0.0
 # Optional: the llama host's --slot-save-path (where .bin KV files live),
 # used by --gc and tip-keeping to delete .bin alongside .meta.json.
 # Absent/empty = auto-detect from GET /models (the instance's command line).
@@ -140,6 +143,7 @@ META_DIR = _META_DIR if os.path.isabs(_META_DIR) else os.path.join(_ROOT, _META_
 os.makedirs(META_DIR, exist_ok=True)
 META_MAX_ENTRIES = int(_cfg["meta"]["max_entries"])
 META_MAX_ENTRIES_POLICY = _cfg["meta"].get("max_entries_policy", "created")
+META_MAX_SIZE_GB = float(_cfg["meta"].get("max_size_gb", 0.0))
 # The llama host's --slot-save-path; empty = auto-detect from GET /models.
 SAVE_PATH = _cfg["meta"].get("save_path", "")
 

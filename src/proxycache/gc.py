@@ -65,7 +65,7 @@ async def run_gc(n: int, by: str, dry_run: bool = False) -> int:
     for meta in chosen:
         key = meta["key"]
         meta_path = os.path.join(config.META_DIR, f"{key}.meta.json")
-        bin_path = os.path.join(save_path, f"{key}.bin") if save_path else ""
+        bin_path = os.path.join(save_path, hs.bin_name(key)) if save_path else ""
 
         print(f"{key[:16]}  created={meta.get('timestamp', 0):.0f} "
               f"last_used={meta.get('last_used', 0):.0f}")
@@ -80,6 +80,28 @@ async def run_gc(n: int, by: str, dry_run: bool = False) -> int:
             else:
                 os.remove(path)
                 print(f"  {kind}: deleted {path}")
+
+    # Orphan bins: .bin files in save_path whose key has no meta at all.
+    if save_path and os.path.isdir(save_path):
+        known = {m["key"] for m in metas}
+        for name in sorted(os.listdir(save_path)):
+            # Only proxy-owned files (pc_ prefix); llama's own
+            # --cache-idle-slots files (same dir) are left alone.
+            if not (name.startswith(hs.BIN_PREFIX) and name.endswith(".bin")):
+                continue
+            key = name[len(hs.BIN_PREFIX):-len(".bin")]
+            if key in known:
+                continue
+            path = os.path.join(save_path, name)
+            print(f"{key[:16]}  orphan (no meta)")
+            if dry_run:
+                print(f"  bin: would delete {path}")
+            else:
+                os.remove(path)
+                print(f"  bin: deleted {path}")
+    else:
+        print("\n(orphan .bin sweep skipped — save path unknown/unreachable)")
+
     if dry_run:
         print("\n(dry run — nothing deleted)")
     return rc

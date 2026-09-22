@@ -17,7 +17,7 @@ class FakeClient:
 
     async def save_slot(self, slot_id, basename, model=None):
         self.saves.append((slot_id, basename, model))
-        return True
+        return (True, 1234)
 
     async def restore_slot(self, slot_id, basename, model=None):
         self.restores.append((slot_id, basename, model))

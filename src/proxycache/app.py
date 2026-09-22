@@ -124,8 +124,8 @@ async def _preunload_save(raw: bytes) -> None:
             return
         await lock.acquire()
         try:
-            ok = await sm.save_after(g, key, m)
-            log.info("preunload_save model=%s key=%s ok=%s", m, key[:16], ok)
+            n_saved = await sm.save_after(g, key, m)
+            log.info("preunload_save model=%s key=%s ok=%s bytes=%d", m, key[:16], n_saved > 0, n_saved)
         finally:
             sm.release(g)
         return
@@ -250,6 +250,10 @@ async def _startup():
     app.state.sm = sm
     app.state.receipts = Receipts()
     app.state.index = MetaIndex()
+    app.state.index.save_path = save_path
+    # Sweep .bin files with no meta (orphaned by prior receipts/cap evictions
+    # that couldn't reach the .bin, or keys pruned while the proxy was down).
+    app.state.index.clean_orphan_bins()
 
     # B2/EV: model lifecycle watcher per backend (all managed models).
     watchers: List[ModelWatcher] = []
@@ -310,14 +314,14 @@ def _supersede_tip(old_key: str) -> None:
     """Remove a key whose .bin/.meta.json are strictly implied by a newer
     pure-extension save (tip-keeping: a growing chat keeps one rolling .bin).
 
-    Cache files are named ``{key}.bin`` (the filename we pass to llama).
+    Cache files are named ``pc_{key}.bin`` (the filename we pass to llama).
     """
     index: MetaIndex = app.state.index
     save_path: str = app.state.save_path
     index.remove(old_key)
     paths = []
     if save_path:
-        paths.append(os.path.join(save_path, f"{old_key}.bin"))
+        paths.append(os.path.join(save_path, hs.bin_name(old_key)))
     paths.append(os.path.join(META_DIR, f"{old_key}.meta.json"))
     for path in paths:
         try:
@@ -383,27 +387,30 @@ async def start_stream_task(
                     receipts.record(key, cache_n, prompt_n)
                     if receipts.is_stale(key):
                         receipts.prune_stale([key])
+                        app.state.index.remove(key)
+                        app.state.index._delete_bin(key)
                 except Exception as e:
                     log.warning("receipt_stream_fail key=%s: %s", key[:16], e)
             try:
                 await resp.aclose()
             except Exception:
                 pass
-            ok = False
+            n_saved = 0
             if sm.save_allowed(key, SAVE_MIN_INTERVAL):
                 try:
-                    ok = await sm.save_after(g, key, route_model, len(prefix))
+                    n_saved = await sm.save_after(g, key, route_model, len(prefix))
                 except Exception as e:
                     log.warning("save_after_exception g=%s key=%s: %s", g, key[:16], e)
             else:
                 log.info("save_skip_fuse key=%s", key[:16])
+            ok = n_saved > 0
             # Tip-keeping: every indexed key this key purely extends is
             # strictly redundant now that this save succeeded.
             if ok:
                 for ext_key in _keys_superseded(blocks, unit):
                     _supersede_tip(ext_key)
             try:
-                app.state.index.write(key, prefix, blocks, wpb, model_id, unit)
+                app.state.index.write(key, prefix, blocks, wpb, model_id, unit, size=n_saved)
             except Exception as e:
                 log.warning("write_meta_exception key=%s: %s", key[:16], e)
             sm.release(g)
@@ -657,24 +664,25 @@ async def chat(req: Request):
                 if receipts.is_stale(key):
                     receipts.prune_stale([key])
                     index.remove(key)
+                    index._delete_bin(key)
             except Exception as e:
                 log.warning("receipt_fail key=%s: %s", key[:16], e)
 
-            ok = False
+            n_saved = 0
             if is_big:
                 # SV cost fuse: never re-save the same key more often than
                 # SAVE_MIN_INTERVAL (bounds crash loss without churning disk).
                 if sm.save_allowed(key, SAVE_MIN_INTERVAL):
                     _count("save_attempts_total")
                     try:
-                        ok = await sm.save_after(g, key, client_model, len(prefix))
-                        if ok:
+                        n_saved = await sm.save_after(g, key, client_model, len(prefix))
+                        if n_saved > 0:
                             _count("save_ok_total")
                     except Exception as e:
                         log.warning("save_after_exception g=%s key=%s: %s", g, key[:16], e)
                 else:
                     log.info("save_skip_fuse key=%s", key[:16])
-                if ok:
+                if n_saved > 0:
                     for ext_key in _keys_superseded(blocks, unit):
                         _supersede_tip(ext_key)
                 try:
@@ -685,6 +693,7 @@ async def chat(req: Request):
                         wpb,
                         backend_model_id,
                         unit,
+                        size=n_saved,
                     )
                 except Exception as e:
                     log.warning("write_meta_exception key=%s: %s", key[:16], e)
@@ -694,7 +703,7 @@ async def chat(req: Request):
                 "json_done g=%s key=%s saved=%s is_big=%s dur_ms=%d",
                 g,
                 key[:16],
-                ok,
+                n_saved > 0,
                 is_big,
                 int((time.time() - t0) * 1000),
             )

@@ -10,7 +10,7 @@ the proxy exists to manage.
 ```
 client ──▶ proxycache :8081 ──▶ llama.cpp (router) :30000 ──▶ model instance :36899
               │  watches /models/sse
-              │  saves/restores {key}.bin via /slots/{id}
+              │  saves/restores pc_{key}.bin via /slots/{id}
 ```
 
 ## How it works
@@ -40,9 +40,19 @@ A 20s reconciler polls `/props` + `/slots` for in-model KV loss (e.g. RAM evicti
 Shutdown (SIGTERM) saves every occupied slot.
 
 **Receipts & GC.** Every response records its reuse ratio (`cache_n / (cache_n + prompt_n)`).
-A key whose last two receipts show ~0 reuse is pruned from the index (its `.bin` stays on disk
-along with its `.bin` when the save path is reachable). The meta index can also be capped
-(`max_entries`, `0` = no cap, victim per `max_entries_policy`) — manual eviction: `python proxycache.py --gc N --by created|unused`.
+A key whose last two receipts show ~0 reuse is pruned from the index; its `.meta.json` **and**
+`.bin` are deleted (`.bin` only when the save path is reachable). The meta index can also be
+capped by entry count (`max_entries`, `0` = no cap) or total `.bin` size (`max_size_gb`,
+`0` = no cap); both evict per `max_entries_policy` and delete the victim's `.meta.json` **and**
+`.bin`. Tip-keeping, `--gc`, and both caps all remove the `.bin` alongside the meta. On startup
+the proxy also sweeps orphan `.bin` files (a proxy `.bin` whose key has no meta) when the save
+path is reachable. Manual eviction: `python proxycache.py --gc N --by created|unused` (also sweeps
+orphans).
+
+Proxy cache files are named `pc_{key}.bin` — the `pc_` prefix distinguishes them from llama.cpp's
+own `--cache-idle-slots` files (which share the same `--slot-save-path` directory and use bare
+64-hex names). The orphan sweep and `--gc` only touch `pc_`-prefixed files, leaving llama's own
+caches alone.
 
 **Pass-through.** Everything else — `/v1/models`, `/props`, `/health`, `/metrics`, the Web UI,
 tools, embeddings, anything — is forwarded raw. The proxy injects the `model` field into
@@ -99,6 +109,7 @@ No env vars, no CLI flags.
 | `meta.dir` | `./kv_meta` | meta directory (proxy-local) |
 | `meta.max_entries` | `32` | index cap (`0` = no cap) |
 | `meta.max_entries_policy` | `created` | cap victim: `created` (oldest) or `unused` (longest unused, like `--gc --by unused`) |
+| `meta.max_size_gb` | `0` | max total `.bin` size in GB (`0` = no cap); same victim policy |
 | `meta.save_path` | `""` | llama host's `--slot-save-path`; empty = auto-detect from `GET /models` |
 | `saves.min_interval` | `10` | seconds between saves of the same key |
 | `watcher.reconcile_interval` | `20` | seconds between KV-loss polls |
@@ -118,7 +129,9 @@ python proxycache.py --gc 8 --by unused              # evict 8 longest-unused
 For each evicted key it deletes `{meta.dir}/{key}.meta.json` and
 `{save_path}/{key}.bin` (the save path is auto-detected from `GET /models`
 unless `meta.save_path` overrides it; `.bin` deletion is skipped when the
-path is unreachable — e.g. proxy and llama on different machines).
+path is unreachable — e.g. proxy and llama on different machines). It then
+sweeps **orphan** `.bin` files (present in the save path but with no meta)
+and deletes them when the path is reachable.
 
 ## Endpoints
 

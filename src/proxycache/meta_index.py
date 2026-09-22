@@ -20,16 +20,62 @@ from typing import Dict, Optional, Tuple
 
 from . import config
 from . import hashing as hs
-from .config import META_MAX_ENTRIES
+from .config import META_MAX_ENTRIES, META_MAX_SIZE_GB
 
 log = logging.getLogger(__name__)
+
+_GB = 1024 ** 3
 
 
 class MetaIndex:
     def __init__(self, max_entries: int = META_MAX_ENTRIES):
         self.max_entries = max_entries
+        self.max_size_gb = META_MAX_SIZE_GB
+        # llama host's --slot-save-path; set at startup (empty = .bin ops off).
+        self.save_path: str = ""
         self._metas: Dict[str, dict] = {}
         self._load()
+
+    def _bin_reachable(self) -> bool:
+        """True when the .bin directory exists in THIS proxy's filesystem."""
+        return bool(self.save_path) and os.path.isdir(self.save_path)
+
+    def _delete_bin(self, key: str) -> None:
+        if not self._bin_reachable():
+            return
+        path = os.path.join(self.save_path, hs.bin_name(key))
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+                log.info("bin_deleted key=%s path=%s", key[:16], path)
+        except Exception as e:
+            log.warning("bin_delete_fail key=%s: %s", key[:16], e)
+
+    def clean_orphan_bins(self) -> list:
+        """Delete .bin files in save_path whose key has no meta in the index.
+
+        Returns the deleted keys. No-op when save_path is unreachable.
+        """
+        deleted = []
+        if not self._bin_reachable():
+            return deleted
+        try:
+            names = os.listdir(self.save_path)
+        except OSError as e:
+            log.warning("orphan_scan_fail: %s", e)
+            return deleted
+        for name in names:
+            # Only proxy-owned files (pc_ prefix); llama's own
+            # --cache-idle-slots files (same dir) are left alone.
+            if not (name.startswith(hs.BIN_PREFIX) and name.endswith(".bin")):
+                continue
+            key = name[len(hs.BIN_PREFIX):-len(".bin")]
+            if key not in self._metas:
+                self._delete_bin(key)
+                deleted.append(key)
+        if deleted:
+            log.info("orphan_bins_cleaned n=%d", len(deleted))
+        return deleted
 
     def _load(self):
         for meta in hs.scan_all_meta():
@@ -39,6 +85,9 @@ class MetaIndex:
         self._enforce_cap()
         log.info("meta_index_loaded n=%d", len(self._metas))
 
+    def _total_size_bytes(self) -> int:
+        return sum(m.get("size", 0) for m in self._metas.values())
+
     def write(
         self,
         key: str,
@@ -47,8 +96,9 @@ class MetaIndex:
         wpb: int,
         model_id: str,
         unit: str = "words",
+        size: int = 0,
     ) -> None:
-        """Disk meta + index in one step."""
+        """Disk meta + index in one step. size = .bin file size in bytes."""
         import json
         now = time.time()
         meta = {
@@ -60,6 +110,7 @@ class MetaIndex:
             "blocks": blocks,
             "timestamp": now,
             "last_used": now,
+            "size": size,
         }
         path = os.path.join(config.META_DIR, f"{key}.meta.json")
         with open(path, "w", encoding="utf-8") as f:
@@ -129,20 +180,29 @@ class MetaIndex:
         return meta.get("timestamp", 0)
 
     def _enforce_cap(self) -> None:
-        if self.max_entries <= 0:
-            return  # cap disabled (manual --gc management)
         policy = config.META_MAX_ENTRIES_POLICY
-        while len(self._metas) > self.max_entries:
-            oldest = min(
-                self._metas.values(),
-                key=lambda m: self._victim_key(m, policy),
-            )
-            key = oldest.get("key")
-            self._metas.pop(key, None)
-            path = os.path.join(config.META_DIR, f"{key}.meta.json")
-            try:
-                if os.path.exists(path):
-                    os.remove(path)
-                log.info("meta_gc key=%s", (key or "?")[:16])
-            except Exception as e:
-                log.warning("meta_gc_fail key=%s: %s", (key or "?")[:16], e)
+        # Entry cap
+        if self.max_entries > 0:
+            while len(self._metas) > self.max_entries:
+                self._evict_one(policy)
+        # Size cap
+        if self.max_size_gb > 0:
+            max_bytes = self.max_size_gb * _GB
+            while self._total_size_bytes() > max_bytes and self._metas:
+                self._evict_one(policy)
+
+    def _evict_one(self, policy: str) -> None:
+        oldest = min(
+            self._metas.values(),
+            key=lambda m: self._victim_key(m, policy),
+        )
+        key = oldest.get("key")
+        self._metas.pop(key, None)
+        path = os.path.join(config.META_DIR, f"{key}.meta.json")
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+            log.info("meta_gc key=%s", (key or "?")[:16])
+        except Exception as e:
+            log.warning("meta_gc_fail key=%s: %s", (key or "?")[:16], e)
+        self._delete_bin(key or "")

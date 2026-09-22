@@ -125,8 +125,8 @@ class ModelWatcher:
             return
         await lock.acquire()
         try:
-            ok = await self.sm.save_after(g, key, slot_model)
-            log.info("preemptive_save g=%s key=%s ok=%s", g, key[:16], ok)
+            n_saved = await self.sm.save_after(g, key, slot_model)
+            log.info("preemptive_save g=%s key=%s ok=%s bytes=%d", g, key[:16], n_saved > 0, n_saved)
         finally:
             self.sm.release(g)
 
