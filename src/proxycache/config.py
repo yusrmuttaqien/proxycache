@@ -12,6 +12,7 @@ below, so configuration is a file you edit — no env vars, no CLI flags.
 import os
 import tomllib
 import logging
+from typing import Optional
 
 _ROOT = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -28,6 +29,7 @@ log_level = "INFO"
 # Max seconds a proxied request may take.
 request_timeout = 600.0
 # Max seconds to wait for a slot lock before answering 503.
+# 0 = no timeout (wait indefinitely, like llama-server's native queue).
 acquire_timeout = 300.0
 
 [model]
@@ -116,7 +118,8 @@ SERVER_HOST = _cfg["server"]["host"]
 PORT = int(_cfg["server"]["port"])
 LOG_LEVEL = _cfg["server"]["log_level"]
 REQUEST_TIMEOUT = float(_cfg["server"]["request_timeout"])
-ACQUIRE_TIMEOUT = float(_cfg["server"]["acquire_timeout"])
+# 0 = no timeout (indefinite wait, like llama-server's native queue).
+ACQUIRE_TIMEOUT: Optional[float] = float(_cfg["server"]["acquire_timeout"]) or None
 
 # --- model -----------------------------------------------------------------
 MODELS: list = list(_cfg["model"].get("models", []))

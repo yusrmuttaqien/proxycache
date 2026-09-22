@@ -48,6 +48,24 @@ def test_acquire_release():
     asyncio.run(run())
 
 
+def test_acquire_no_timeout_waits():
+    """acquire_timeout=None (config 0) = indefinite wait, never returns None."""
+
+    async def run():
+        sm = make_sm()
+        lock = sm._locks[(0, 0)]
+        await lock.acquire()  # hold it
+        task = asyncio.create_task(sm.acquire(acquire_timeout=None))
+        await asyncio.sleep(0.05)
+        assert not task.done()  # waiting, not timed out
+        lock.release()
+        g = await task
+        assert g == (0, 0)
+        sm.release(g)
+
+    asyncio.run(run())
+
+
 def test_table_only_on_confirmed_save():
     async def run():
         sm = make_sm()

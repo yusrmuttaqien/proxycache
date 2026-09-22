@@ -81,9 +81,16 @@ class SlotManager:
 
     async def acquire(
         self,
-        acquire_timeout: float = 300.0,
+        acquire_timeout: Optional[float] = None,
     ) -> Optional[GSlot]:
+        """Wait for a slot lock; None = indefinite (llama-native queue behavior).
+
+        Returns None only when the timeout fired.
+        """
         g, lock = self._get_free_or_oldest()
+        if acquire_timeout is None:
+            await lock.acquire()
+            return g
         try:
             await asyncio.wait_for(lock.acquire(), timeout=acquire_timeout)
         except asyncio.TimeoutError:

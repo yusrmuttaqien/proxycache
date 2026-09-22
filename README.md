@@ -100,7 +100,7 @@ No env vars, no CLI flags.
 | `server.host` / `server.port` | `0.0.0.0` / `8081` | listen address |
 | `server.log_level` | `INFO` | log level |
 | `server.request_timeout` | `600` | max seconds per proxied request |
-| `server.acquire_timeout` | `300` | max wait for a slot lock, then 503 |
+| `server.acquire_timeout` | `300` | max wait for a slot lock, then 503; `0` = wait indefinitely (llama-native queue) |
 | `model.models` | `[]` | managed models (empty = auto-discover all) |
 | `backends[].url` / `n_slots` | — / optional | backend URL; slot count fallback (server's `/slots` always wins) |
 | `hashing.words_per_block` / `tokens_per_block` | `100` / `256` | block window size |
