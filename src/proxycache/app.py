@@ -280,18 +280,16 @@ async def _shutdown():
 
 
 def _supersede_tip(old_key: str) -> None:
-    """Remove a key whose cache/.meta.json is strictly implied by a newer
-    pure-extension save (tip-keeping: a growing chat keeps one rolling cache).
+    """Remove a key whose .bin/.meta.json are strictly implied by a newer
+    pure-extension save (tip-keeping: a growing chat keeps one rolling .bin).
 
-    llama writes the cache file named exactly ``{key}`` (the filename we
-    pass); ``{key}.bin`` is kept as a fallback for older probe files.
+    Cache files are named ``{key}.bin`` (the filename we pass to llama).
     """
     index: MetaIndex = app.state.index
     save_path: str = app.state.save_path
     index.remove(old_key)
     paths = []
     if save_path:
-        paths.append(os.path.join(save_path, old_key))
         paths.append(os.path.join(save_path, f"{old_key}.bin"))
     paths.append(os.path.join(META_DIR, f"{old_key}.meta.json"))
     for path in paths:

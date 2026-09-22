@@ -99,7 +99,7 @@ class SlotManager:
         model: Optional[str] = None,
     ) -> bool:
         client = self.backends[g[0]]["client"]
-        restored = await client.restore_slot(g[1], restore_key, model)
+        restored = await client.restore_slot(g[1], f"{restore_key}.bin", model)
         log.info(
             "restore_before_chat g=%s key=%s ok=%s",
             g,
@@ -120,7 +120,7 @@ class SlotManager:
         prefix_len: int = 0,
     ) -> bool:
         client = self.backends[g[0]]["client"]
-        ok = await client.save_slot(g[1], key, model)
+        ok = await client.save_slot(g[1], f"{key}.bin", model)
         self._last_used[g] = time.time()
         if ok:
             # Table is updated only on a confirmed save.
