@@ -65,11 +65,14 @@ async def run_gc(n: int, by: str, dry_run: bool = False) -> int:
     for meta in chosen:
         key = meta["key"]
         meta_path = os.path.join(config.META_DIR, f"{key}.meta.json")
-        bin_path = os.path.join(save_path, f"{key}.bin") if save_path else ""
+        # llama names the cache file exactly {key}; {key}.bin is a fallback
+        # for older probe files.
+        bin_path = os.path.join(save_path, key) if save_path else ""
+        bin_path_alt = os.path.join(save_path, f"{key}.bin") if save_path else ""
 
         print(f"{key[:16]}  created={meta.get('timestamp', 0):.0f} "
               f"last_used={meta.get('last_used', 0):.0f}")
-        for path, kind in ((meta_path, "meta"), (bin_path, "bin")):
+        for path, kind in ((meta_path, "meta"), (bin_path, "bin"), (bin_path_alt, "bin")):
             if not path:
                 continue
             if not os.path.exists(path):
