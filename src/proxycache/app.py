@@ -279,12 +279,15 @@ async def _shutdown():
         await asyncio.gather(*(c.close() for c in clients))
 
 
-def _keys_extended(blocks: List[str], unit: str) -> List[str]:
-    """Keys in the index that `blocks` purely extends (tip-keeping targets).
+def _keys_superseded(blocks: List[str], unit: str) -> List[str]:
+    """Keys in the index made redundant by saving `blocks` (tip-keeping).
 
-    Scans the meta index, not just the slot's current key: in a ping-pong
-    (two chats alternating) the key being extended sits in the index while
-    the slot holds the other chat's key.
+    A key is superseded when `blocks` is a pure PREFIX of it (or vice
+    versa): llama's restore reuses the new key's blocks, so the shorter of
+    a prefix pair is never needed once the longer tip is saved. Scans the
+    meta index, not just the slot's current key: in a ping-pong (two chats
+    alternating) the key being superseded sits in the index while the slot
+    holds the other chat's key.
     """
     out: List[str] = []
     for k in app.state.index.keys():
@@ -294,10 +297,11 @@ def _keys_extended(blocks: List[str], unit: str) -> List[str]:
         if meta is None or meta.get("unit", "words") != unit:
             continue
         ob = meta.get("blocks") or []
-        if not ob or len(ob) >= len(blocks):
+        if not ob:
             continue
         lcp = hs.lcp_blocks(blocks, ob)
-        if lcp / max(1, len(ob)) >= LCP_TH:
+        shorter = min(len(blocks), len(ob))
+        if shorter > 0 and lcp / shorter >= LCP_TH:
             out.append(k)
     return out
 
@@ -396,7 +400,7 @@ async def start_stream_task(
             # Tip-keeping: every indexed key this key purely extends is
             # strictly redundant now that this save succeeded.
             if ok:
-                for ext_key in _keys_extended(blocks, unit):
+                for ext_key in _keys_superseded(blocks, unit):
                     _supersede_tip(ext_key)
             try:
                 app.state.index.write(key, prefix, blocks, wpb, model_id, unit)
@@ -671,7 +675,7 @@ async def chat(req: Request):
                 else:
                     log.info("save_skip_fuse key=%s", key[:16])
                 if ok:
-                    for ext_key in _keys_extended(blocks, unit):
+                    for ext_key in _keys_superseded(blocks, unit):
                         _supersede_tip(ext_key)
                 try:
                     index.write(
