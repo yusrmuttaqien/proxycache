@@ -547,11 +547,17 @@ async def chat(req: Request):
 
     restored: Optional[bool] = None
     if is_big and restore_key:
-        _count("restore_attempts_total")
-        restored = await sm.restore(g, restore_key, client_model)
-        if restored:
-            _count("restore_ok_total")
+        if cur_key == restore_key:
+            # Slot already holds the candidate (its tip was just saved) —
+            # restoring would reload the identical KV from disk for nothing.
+            log.info("restore_skip_same g=%s key=%s", g, restore_key[:16])
             index.touch_used(restore_key)
+        else:
+            _count("restore_attempts_total")
+            restored = await sm.restore(g, restore_key, client_model)
+            if restored:
+                _count("restore_ok_total")
+                index.touch_used(restore_key)
 
     log.info("after_acquire g=%s restored=%s cur_key=%s", g, restored,
              cur_key[:16] if cur_key else None)
