@@ -120,11 +120,23 @@ class MetaIndex:
                 best_key = meta.get("key")
         return (best_key, best_ratio) if best_key else None
 
+    @staticmethod
+    def _victim_key(meta: dict, policy: str) -> float:
+        # Same ordering as gc._sort_key: "unused" = longest unused
+        # (missing last_used falls back to timestamp), "created" = oldest.
+        if policy == "unused":
+            return meta.get("last_used", meta.get("timestamp", 0))
+        return meta.get("timestamp", 0)
+
     def _enforce_cap(self) -> None:
         if self.max_entries <= 0:
             return  # cap disabled (manual --gc management)
+        policy = config.META_MAX_ENTRIES_POLICY
         while len(self._metas) > self.max_entries:
-            oldest = min(self._metas.values(), key=lambda m: m.get("timestamp", 0))
+            oldest = min(
+                self._metas.values(),
+                key=lambda m: self._victim_key(m, policy),
+            )
             key = oldest.get("key")
             self._metas.pop(key, None)
             path = os.path.join(config.META_DIR, f"{key}.meta.json")

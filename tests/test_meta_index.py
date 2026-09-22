@@ -47,6 +47,20 @@ def test_cap_evicts_oldest(tmp_meta):
     assert not os.path.exists(os.path.join(config.META_DIR, "k1.meta.json"))
 
 
+def test_cap_evicts_unused_policy(tmp_meta, monkeypatch):
+    monkeypatch.setattr(config, "META_MAX_ENTRIES_POLICY", "unused")
+    idx = MetaIndex(max_entries=2)
+    blocks = ["h1"]
+    idx.write("k1", "a", blocks, 1, "m", "words")
+    idx.write("k2", "b", blocks, 1, "m", "words")
+    # k1 was created first but k2 is now the longest-unused.
+    idx._metas["k2"]["last_used"] = 1.0
+    idx.write("k3", "c", blocks, 1, "m", "words")
+    assert idx.get("k2") is None
+    assert idx.get("k1") is not None
+    assert idx.get("k3") is not None
+
+
 def test_persistence_reload(tmp_meta):
     idx = MetaIndex(max_entries=8)
     blocks = ["h1"]
