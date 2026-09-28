@@ -35,6 +35,7 @@ All server behavior in this doc was verified against **real source**, not docs:
 | **`id_slot` in response** | `tools/server/server-context.cpp:2448` (`res->id_slot = slot.id`) |
 | **Queue deferral** (no preemption, KV-neutral wait) | `tools/server/server-context.cpp:2847` ("no slot is available, defer task"); `tools/server/server-queue.h` (`queue_tasks_deferred`) |
 | **No slot idle-release timer** (verified absence) | `tools/server/server-context.cpp` — no idle-timeout param; slot states only (`SLOT_STATE_IDLE` ~143) |
+| **Per-response reuse report**: `n_prompt_tokens_cache` + `timings.{cache_lcp_n, cache_planned_n, cache_reprocessed_n, cache_source, cache_reason}` | `tools/server/server-common.h` ~317, ~404–415; set at `server-context.cpp` 2423/2472 |
 
 **Re-verification checklist** (run after any fork/upstream version change, before trusting
 this doc or the implementation):
@@ -124,6 +125,7 @@ multi-MB JSON). The proxy needs only the **head** (root exchange → id hash) an
 request.
 
 **Known limitations** (accepted):
+
 - One conv = one endpoint **format**: `/chat/completions` and `/v1/messages`
   tokenize differently (different templates) → the same logical conversation via two
   formats = two convs. Correct behavior (like a system-prompt change), just documented.
@@ -147,10 +149,10 @@ client never sees them. Routes probed from the beellama.cpp fork
 | `POST /completion(s)`, `/v1/completions`, `/responses`, `/v1/messages`, `/infill`, `/v1/audio/transcriptions`, `/v1/chat/completions/control` | yes | pass-through + **desk dirty** |
 | `POST /embedding(s)`, `/v1/embeddings`, `/rerank(ing)` | yes (verified: slot pool, `SERVER_TASK_TYPE_EMBEDDING`) | pass-through + desk dirty |
 | `POST /slots/:id` (no action), `POST /lora-adapters` | yes | pass-through + desk dirty |
-| `POST /models`, `/models/load|unload|reload`, `DELETE /models` | router child lifecycle | pass-through + desk dirty (unload/reload = desk empty) |
+| `POST /models`, `/models/load\|unload\|reload`, `DELETE /models` | router child lifecycle | pass-through + desk dirty (unload/reload = desk empty) |
 | `DELETE /v1/stream` | stream/slot release | pass-through + desk dirty |
 | `GET /health`, `/metrics`, `/props`, `POST /props`, `GET /models`, `GET /slots`, `GET /lora-adapters`, `POST /tokenize`, `/detokenize`, `/apply-template`, `*input_tokens`/`count_tokens`, `POST /v1/streams/lookup`, `GET /v1/stream`, `/cors-proxy` | no | pure pass-through |
-| `POST /slots/:id?action=save|restore|erase` | — | proxy-internal only |
+| `POST /slots/:id?action=save\|restore\|erase` | — | proxy-internal only |
 
 - **Deployment rule**: the server port is reachable **only via the proxy** — if any
   client mutates a slot directly, the proxy's action log goes stale silently.
@@ -176,10 +178,11 @@ Identified conv **∉ `ram_since_restore`** (not in the live tree — *stronger*
 drained slot (in_flight == 0) and saves the target slot's conv first. No eager restore (not at
 startup, not speculative), never a restore for a conv already in the tree.
 
-**DELETE (hygiene):** restore→400 · compaction detected · LRU over cap · stale
+**DELETE (hygiene):** restore→400 · shifted-suffix detected · LRU over cap · stale
 `.tmp` at startup.
 
 **No-strain invariants:**
+
 1. Event-driven only — zero background timers touch the slot (sole poll: `/health`,
    read-only, for restart detection).
 2. ≤ 1 save per response, ≤ 1 restore per switch — idempotent; duplicates impossible.
@@ -203,6 +206,7 @@ Canonical state (per model):
 "Warm" = arriving conv ∈ that slot's `ram_since_restore`. No API call.
 
 **Invalidation events:**
+
 - Restore(C) into slot S → S's `ram_since_restore = {C}`.
 - Router restart (detected via `/health` flip / dropped connection) → **all** slots'
   sets = ∅, all tables cleared.
@@ -263,6 +267,7 @@ only (desk-dirty rule). Proxy+router dying together is fine — **disk is the
 persistence layer**; content-derived filenames + `stat()`-rebuilt ledger recover it.
 
 **Slot awareness: the proxy is the slot allocator.** Verified facts:
+
 - Server's selection ladder (`server-context.cpp:1730+`): **pinned id →
   restorable-prefix match (if `slot_prompt_similarity` set) → LRU**. On displacing a
   slot with <50% keep, the server auto-saves the old KV to the RAM tier first.
@@ -273,6 +278,7 @@ persistence layer**; content-derived filenames + `stat()`-rebuilt ledger recover
 Design: per-model **conv → slot table**; the proxy **injects `id_slot` into every
 chat body** (same mechanism as `n_cache_reuse`) → it always knows exactly which slot
 every conv lives in → save/restore target the right slot, zero guessing.
+
 - **Allocation** (mirrors server LRU): new conv, all slots held → pick LRU conv's
   slot → save it → restore new conv into it. Drain rules unchanged.
 - **Slot count**: read at startup (`GET /slots` / config) per model. **Single slot =
@@ -289,10 +295,11 @@ every conv lives in → save/restore target the right slot, zero guessing.
 3. Identify conversation:
    - Header present → use declared id.
    - Else longest-tail match → same conv (update tail) **or** new conv:
-     - **Compaction check** (new-conv path only): does `T`'s tail match a known conv's
-       tail with overlap ≥ `TAIL_MATCH_MIN` (e.g. 64 tokens)? → that conv was compacted
-       → **delete its file now** (provably dead). No match → genuinely new (or a
-       full-rewrite compaction — undetectable, LRU handles it).
+     - **Shifted-suffix check** (new-conv path only): does `T`'s tail match a known
+       conv's tail with overlap ≥ `TAIL_MATCH_MIN` (e.g. 64 tokens)? → that conv was
+       rewritten (compaction / head change / middle edit) → **delete its file now**
+       (provably dead). No match → genuinely new (or a full-rewrite — undetectable,
+       LRU handles it).
 4. **Restore check** (see "Desk state" for the full mechanism): `conv ∉
    ram_since_restore` (of its allocated slot)?
    - No → conv is in the live tree → forward directly (server reuses; no restore).
@@ -328,21 +335,36 @@ every conv lives in → save/restore target the right slot, zero guessing.
 | save | after response fully completes | slot state == conversation state; server defers until idle anyway |
 | skip save | `L < MIN_SAVE_TOKENS` | small convs: prefill < file cost |
 | restore | conv **∉ live tree**, before forwarding | one restore per switch, never per request; no eager restore at startup |
-| delete file | restore 400 / compaction detected / LRU evict | dead files don't accumulate |
+| delete file | restore 400 / shifted-suffix detected / LRU evict | dead files don't accumulate |
 | serialize | no chat forwarded during a restore | restore clears the slot; racing a chat into it = wasted restore |
 
-## Compaction & history rewrites
+## Compaction, head changes & history rewrites (shifted-suffix family)
 
-- Compaction = **new conversation at both layers** (server KV: LCP ≈ 0 → full prefill;
-  proxy: new key → new file). The one full prefill is unavoidable — the server pays it
-  with warm RAM too.
+Every case here is the **same shape**: a *suffix* of the prompt is unchanged, but
+everything before it shifted. The tail-matcher detects them all (new conv whose tail
+matches an old tail → old file deleted + targeted `n_cache_reuse` injected); the server
+slides the unchanged suffix's KV to its new offset. Instances:
+
+- **Compaction** (middle shrink): `[system][long-history]` → `[system][summary]`.
+- **Head change** (system prompt / cwd / tools / template): `[system_old][conv]` →
+  `[system_new][conv]` — e.g. **moving a chat to a new directory** (cwd in the system
+  prompt). Needs the conversation longer than the tail window, else the tail includes
+  the system prompt and the match fails → genuinely new conv.
+- **Middle edit**: `[system][A][B]` → `[system][A'][B]` (B = tail, unchanged).
+
+All = **new conversation at both layers** (server KV: LCP ≈ 0 → full prefill; proxy:
+new key → new file). Without `n_cache_reuse`, the one full prefill is unavoidable — the
+server pays it with warm RAM too. With it (targeted), only the changed prefix
+re-prefills; the unchanged suffix's KV is slid.
+
 - **Detection threshold**: tail overlap ≥ `TAIL_MATCH_MIN` (64). Below → no detection →
   LRU is the safety net. False positive cost = one future cold start (cheap).
 - **Middle-edit** (non-compaction history rewrite): looks like a new conv; tail matches
   old → old file deleted. Accepted loss: post-restart partial-prefix reuse of the old
   file (≈ one short prefill).
-- **`n_cache_reuse` (optional, default OFF)**: server-side, live-RAM only. When a chat
-  is compacted (summary shorter than what it replaced), the tail shifts position;
+- **`n_cache_reuse` (optional, default OFF)**: server-side, live-RAM only. When a
+  shifted-suffix rewrite happens (compaction / head change / middle edit), the
+  unchanged suffix shifts position;
   `n_cache_reuse` slides already-computed KV chunks to their new offset (`seq_add(...,
   kv_shift)`) instead of re-prefilling. ELI5: "I already read page 50; the book lost 10
   pages from the front, so move my bookmark — don't re-read." Orthogonal to disk
@@ -352,9 +374,9 @@ every conv lives in → save/restore target the right slot, zero guessing.
     **per-request body field** (verified in schema). The proxy can set it **at runtime**
     by injecting `"n_cache_reuse": N` into the forwarded chat body — no server restart.
   - **Targeted mode (preferred)**: the proxy is the only thing that *detects* a
-    compaction, so it injects `n_cache_reuse` **only on that one request** (new conv
-    whose tail matched an old tail) — exactly when a shifted tail exists in the live
-    tree. Off otherwise → zero cost when unneeded. Trade-off: the proxy writes that
+    shifted-suffix rewrite, so it injects `n_cache_reuse` **only on that one request**
+    (new conv whose tail matched an old tail) — exactly when a shifted suffix exists
+    in the live tree. Off otherwise → zero cost when unneeded. Trade-off: the proxy writes that
     one chat body (adds a field) — no longer byte-identical on it; harmless.
   - **Simple mode (v1)**: set a server-level default, proxy doesn't touch it.
 
@@ -374,7 +396,7 @@ every conv lives in → save/restore target the right slot, zero guessing.
    *deletes* them directly (no delete API) → both must see the same path (same host,
    or shared Docker volume).
 6. **Observability**: structured logs only — save (conv, `n_saved`, ms), restore
-   (hit/400), evict, guard on/off, compaction detected. No UI/state endpoint.
+   (hit/400), evict, guard on/off, shifted-suffix detected. No UI/state endpoint.
 7. **Slot persistence (verified)**: this fork has **no slot idle-release timer** — the
    desk stays in RAM until context pressure. `--cache-idle-slots` (RAM tier) is
    server-internal and transparent. The desk cannot silently empty itself.
@@ -392,6 +414,41 @@ every conv lives in → save/restore target the right slot, zero guessing.
       files). Once per switch, client-visible, buys the warm start.
     - Per turn: +save (at the turn boundary, slot idle).
 
+## Miss debugger (niche-case observability)
+
+The design handles the common cases by construction; niche misses (e.g. **moving a chat
+to a new directory** → cwd in system prompt → head tokens change → full pp, *correctly*
+a new conversation) need a post-hoc causal chain to diagnose and decide on.
+
+**Per-request correlation record** (DEBUG level, one structured line per request):
+
+- `request_id` (proxy-assigned; maps to server `cmpl_id`)
+- **Proxy verdict**: same-conv (id) | new-conv (closest candidate id)
+  - if new: **first-divergence index** vs closest candidate + **detokenized window**
+    around it (via `/detokenize`) — this is the "byte diff that caused the miss"
+- **Server verdict** (from the response itself): `n_prompt_tokens_cache`,
+  `timings.cache_source`, `timings.cache_reason`, `timings.cache_lcp_n`
+- **Proxy actions taken**: save / restore / skip / evict (with sizes)
+
+**Miss taxonomy** — every full prefill is classified into exactly one bucket, so logs
+are aggregable and decisions are referenceable:
+
+1. **Genuinely new conv** (no tail/head relationship to any known conv)
+2. **Head change** (system prompt / tools / cwd / template) — divergence at early index
+3. **Middle edit** (tail matched, middle diverged)
+4. **Compaction** (tail matched, new-conv path)
+5. **Server-side loss** (restart / eviction / restore-400) — proxy knows its own actions
+6. **Tier-2 miss** (server `cache_reason`)
+
+**Debug artifacts**: each new-conv event writes a JSON artifact
+`{request_id, ts, closest_candidate, divergence_index, detokenized_window,
+head_hash, tail_hash}` to a debug dir (rotated, bounded). This is the reference for
+evolve-the-proxy decisions ("oh, 40% of my 'new convs' are cwd head-changes →
+normalize cwd out of the fingerprint, or accept it").
+
+**Log levels**: INFO = decisions (save/restore/evict/guard); DEBUG = fingerprint +
+diff + server reuse report; TRACE = full token lists.
+
 ## Failure modes (all degrade to cold start)
 
 | Failure | Handling |
@@ -403,7 +460,7 @@ every conv lives in → save/restore target the right slot, zero guessing.
 | Child model unload/reload | that model's desk clears; files persist; lazy restore |
 | Proxy restart | content-derived ids → same filenames; notebook rebuilt from first requests |
 | Thrashing traffic | adaptive pause of save/restore |
-| Tail too small to fingerprint | no compaction detection; LRU evicts |
+| Tail too small to fingerprint | no shifted-suffix detection; LRU evicts |
 | `save`/`restore` timeout | skip save / delete file + continue cold (`control_timeout_ms`) |
 | `input_tokens` failure | retry once → degraded pass-through + desk dirty (chat never blocked) |
 | Connection drop to server | fail fast 502 + all desks empty (recovery = lazy restore) |
@@ -431,9 +488,9 @@ serialized.
 | `max_bytes` | int | `2 GiB` | max total shelf bytes (`0` = unlimited) |
 | `thrash_window` | int | `8` | rolling requests for guard (`K`) |
 | `thrash_max_switches` | int | `1` | switches allowed per window before pause |
-| `tail_match_min` | int | `64` | min tail overlap for compaction detection |
-| `cache_reuse` | int | `0` | `n_cache_reuse` min chunk size to inject on detected compaction (`0` = off) |
-| `cache_reuse_mode` | enum | `targeted` | `targeted` (inject on compaction only) \| `always` (inject every chat) |
+| `tail_match_min` | int | `64` | min tail overlap for shifted-suffix detection |
+| `cache_reuse` | int | `0` | `n_cache_reuse` min chunk size to inject on a detected shifted-suffix (`0` = off) |
+| `cache_reuse_mode` | enum | `targeted` | `targeted` (inject on shifted-suffix only) \| `always` (inject every chat) |
 | `health_poll_ms` | int | `3000` | `/health` poll for server-restart detection |
 | `control_timeout_ms` | int | `10000` | timeout for proxy-issued `save`/`restore`/`input_tokens` calls |
 | `api_key` | string | (empty) | server's `--api-key`, carried on the proxy's control calls |
@@ -448,15 +505,17 @@ shelf. Re-derive if model/disk changes.
 
 ## Test strategy
 
-**Unit** (no server): tail matcher (extend/fork/compaction), LRU eviction +
+**Unit** (no server): tail matcher (extend/fork/shifted-suffix), LRU eviction +
 hysteresis guard, filename sanitization, ledger math (max_bytes with many small
 files), tmp/rename logic.
 
 **Integration** (real `llama-server`, pinned commit):
+
 1. **Round-trip**: save → kill server → restart → restore → verify warm (no full
    prefill; check timing metrics).
 2. **A→B→A no-waste**: verify **no** restore fires for A on the return (A ∈ tree).
-3. **Compaction delete**: compacted conv → old file deleted, new conv saved.
+3. **Shifted-suffix delete**: compacted conv **and** head-changed conv (cwd move) →
+   old file deleted, new conv saved, and (targeted) `n_cache_reuse` injected.
 4. **Thrashing**: A/B/A/B → guard pauses → verify zero control calls while paused.
 5. **Restore 400**: corrupt a file → restore 400 → file deleted → cold continue.
 6. **Proxy restart**: kill proxy mid-life → restart → ledger rebuilt via `stat()`,
@@ -471,6 +530,6 @@ flaps bounded by hysteresis.
 
 - **Multi-model**: per-model desk + `{model}/{conv}.bin`; restore targets the child slot
   via router `model` field. (Folded into design, not open.)
-- **`n_cache_reuse`**: optional flag, default OFF (see Compaction section).
+- **`n_cache_reuse`**: optional flag, default OFF (see shifted-suffix section).
 - **Fork-split** edge cases: longest-tail match handles fork-of-fork; fork-after-compaction
   is a new conv (tail check runs on the new-conv path). Accepted as-is.
