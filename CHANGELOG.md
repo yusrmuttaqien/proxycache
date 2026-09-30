@@ -25,7 +25,7 @@ step.** Spec: `llamacpp-autosave-proxy-design.md` (source of truth). Workflow:
 | 4 | Restore | ✅ | trigger, drain, idempotent, invalidation, `erase` |
 | 5 | Slot allocator | ✅ | `id_slot`, conv→slot, allocation |
 | 6 | Shifted-suffix | ✅ | detect+delete, `n_cache_reuse` |
-| 7 | Robustness | ⬜ | 400/cold, degraded, timeouts, conn drop, health poll |
+| 7 | Robustness | ✅ | 400/cold, degraded, timeouts, conn drop, health poll |
 | 8 | Observability / Miss debugger | ⬜ | taxonomy, artifacts, log levels |
 | 9 | Testing | ⬜ | unit, integration, property |
 
@@ -168,14 +168,14 @@ Goal: detect rewrites, prune dead files, slide KV.
 
 Goal: the proxy's own failures degrade to cold, never down.
 
-- ⬜ Control-call timeouts (`control_timeout_ms`) → skip save / delete+cold.
+- ✅ Control-call timeouts (`control_timeout_ms`) → skip save / delete+cold.
       *(design: Operations — Control-call failures)*
-- ⬜ Connection drop → fail fast 502 + mark all desks empty. *(design: Operations)*
-- ⬜ `input_tokens` failure → retry once → degraded pass-through + desk dirty.
+- ✅ Connection drop → fail fast 502 + mark all desks empty. *(design: Operations)*
+- ✅ `input_tokens` failure → retry once → degraded pass-through + desk dirty.
       *(design: Operations)*
-- ⬜ Health polling (`health_poll_ms`) for router-restart detection.
+- ✅ Health polling (`health_poll_ms`) for router-restart detection.
       *(design: Desk state — Lifecycle)*
-- ⬜ API key carried on control calls. *(design: Operations — API key)*
+- ✅ API key carried on control calls. *(design: Operations — API key)*
 
 **Done when:** a server restart is detected via the health poll; every control-call
 failure degrades to cold without blocking chat.
@@ -329,3 +329,16 @@ injected into the JSON body (server-accepted field, client-transparent).
 change / middle edit). Detection is a SUFFIX match (not prefix) — the tail is
 unchanged, the head moved. n_cache_reuse is targeted (only on the detected
 request) -> zero cost when unneeded.
+
+## [2026-09-30] — Session 10
+**Task**: Phase 7 — Robustness (timeouts, connection drop, input_tokens retry, health poll).
+**Changes**:
+- `src/robustness.py` — safe_parse_body (None on fail -> pass through);
+  handle_control_call_failure (save->skip_save, restore->delete_cold);
+  TimeoutConfig + should_timeout; on_mid_stream_disconnect; on_connection_drop
+  (mark_all_dirty); on_input_tokens_failure (retry once -> degraded);
+  HealthPoller (should_poll).
+**Lessons**: every control-call failure degrades to cold, never down. Body parse
+fail -> pass through unmodified (never drop the request). input_tokens failure ->
+retry once, then degraded pass-through + desk dirty. Health poll detects router
+restart.
