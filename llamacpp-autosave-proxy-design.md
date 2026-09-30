@@ -467,33 +467,36 @@ diff + server reuse report; TRACE = full token lists.
 
 ## Configuration
 
-**Precedence**: CLI flag > config file > built-in default. Single centralized **TOML**
-config (typed, commented, self-documenting). `-h/--help` prints every knob: name, type,
-accepted range, default, one-line description. Config file ships commented with valid
-values.
+**Single centralized JSON config** (`config.json`), self-documenting like a CLI tool.
+Flags: `--config <path>` (location; default `<project root>/config.json`),
+`--generate-config` (emit every key with default + accepted values + description),
+`--version`. Precedence: **config file > built-in default** — no per-key CLI flags;
+the file is the one surface. Auto-generated with defaults if missing.
+`--generate-config` output (mirrors skillsync): a `# <key>: <description>` line per
+key, then the full JSON with defaults.
 
 **Always-on behaviors (not knobs)**: `id_slot` pinning on every chat (slot
 allocator); slot count read at startup per model (`GET /slots`); control calls
 serialized.
 
-**Knobs** (all tunable; safe defaults shown):
+**Knobs** (all tunable; safe defaults shown; "Accepted" = the valid domain):
 
-| Knob | Type | Default | Meaning |
-|---|---|---|---|
-| `listen` | string | `127.0.0.1:8080` | proxy bind |
-| `upstream` | string | `127.0.0.1:5000` | llama-server address |
-| `save_path` | string | (server's `--slot-save-path`) | where files live |
-| `min_save_tokens` | int | `512` | skip saving below this length |
-| `n_max_files` | int | `4` | max files on shelf (`0` = unlimited) |
-| `max_bytes` | int | `2 GiB` | max total shelf bytes (`0` = unlimited) |
-| `thrash_window` | int | `8` | rolling requests for guard (`K`) |
-| `thrash_max_switches` | int | `1` | switches allowed per window before pause |
-| `tail_match_min` | int | `64` | min tail overlap for shifted-suffix detection |
-| `cache_reuse` | int | `0` | `n_cache_reuse` min chunk size to inject on a detected shifted-suffix (`0` = off) |
-| `cache_reuse_mode` | enum | `targeted` | `targeted` (inject on shifted-suffix only) \| `always` (inject every chat) |
-| `health_poll_ms` | int | `3000` | `/health` poll for server-restart detection |
-| `control_timeout_ms` | int | `10000` | timeout for proxy-issued `save`/`restore`/`input_tokens` calls |
-| `api_key` | string | (empty) | server's `--api-key`, carried on the proxy's control calls |
+| Knob | Type | Default | Accepted | Meaning |
+|---|---|---|---|---|
+| `listen` | string | `127.0.0.1:8080` | `host:port` | proxy bind address |
+| `upstream` | string | `127.0.0.1:5000` | `host:port` | llama-server (router) address |
+| `save_path` | string | (server's `--slot-save-path`) | existing dir | where `.bin` files live (must match the server's) |
+| `min_save_tokens` | int | `512` | `≥ 0` | skip saving below this length |
+| `n_max_files` | int | `4` | `≥ 0` (`0` = ∞) | max files on shelf |
+| `max_bytes` | int | `2147483648` (2 GiB) | `≥ 0` (`0` = ∞) | max total shelf bytes |
+| `thrash_window` | int | `8` | `≥ 2` | rolling requests for the guard (`K`) |
+| `thrash_max_switches` | int | `1` | `≥ 0` | switches allowed per window before pause |
+| `tail_match_min` | int | `64` | `≥ 1` | min tail overlap for shifted-suffix detection |
+| `cache_reuse` | int | `0` | `≥ 0` (`0` = off) | `n_cache_reuse` min chunk size to inject on a shifted-suffix |
+| `cache_reuse_mode` | enum | `targeted` | `targeted` \| `always` | when to inject `n_cache_reuse` |
+| `health_poll_ms` | int | `3000` | `> 0` | `/health` poll interval (router-restart detection) |
+| `control_timeout_ms` | int | `10000` | `> 0` | timeout for proxy-issued `save`/`restore`/`input_tokens` calls |
+| `api_key` | string | `""` | any string | server's `--api-key`, carried on control calls |
 
 ### Threshold estimate (`min_save_tokens`)
 
