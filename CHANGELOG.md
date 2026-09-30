@@ -22,7 +22,7 @@ step.** Spec: `llamacpp-autosave-proxy-design.md` (source of truth). Workflow:
 | 1 | Endpoint routing | ✅ | route table, desk-dirty, slot count, `{model}/{conv}.bin` |
 | 2 | Conversation keying | ✅ | content-derived id, tail match, forks, sanitize |
 | 3 | Save | ✅ | trigger, tmp+rename, ledger, LRU, thrashing guard |
-| 4 | Restore | ⬜ | trigger, drain, idempotent, invalidation, `erase` |
+| 4 | Restore | ✅ | trigger, drain, idempotent, invalidation, `erase` |
 | 5 | Slot allocator | ⬜ | `id_slot`, conv→slot, allocation |
 | 6 | Shifted-suffix | ⬜ | detect+delete, `n_cache_reuse` |
 | 7 | Robustness | ⬜ | 400/cold, degraded, timeouts, conn drop, health poll |
@@ -124,17 +124,17 @@ guard pauses under A/B/A/B thrash.
 
 Goal: reload a conversation from disk exactly when it isn't in the live tree.
 
-- ⬜ `ram_since_restore` tracking per slot (the action log). *(design: Desk state)*
-- ⬜ Restore trigger — conv ∉ `ram_since_restore`, before forwarding.
+- ✅ `ram_since_restore` tracking per slot (the action log). *(design: Desk state)*
+- ✅ Restore trigger — conv ∉ `ram_since_restore`, before forwarding.
       *(design: event table — RESTORE)*
-- ⬜ Drain before switch — wait `in_flight == 0` (restore lands on an empty slot).
+- ✅ Drain before switch — wait `in_flight == 0` (restore lands on an empty slot).
       *(design: Operations — Drain)*
-- ⬜ Save displaced conv first — preserve the slot's current conv before restore.
+- ✅ Save displaced conv first — preserve the slot's current conv before restore.
       *(design: Desk state — pseudocode; Slot awareness — Allocation)*
-- ⬜ 400 handling — bad/old file → delete + continue cold. *(design: Failure modes)*
-- ⬜ Invalidation events — router restart (all desks) / child unload (per-model) /
+- ✅ 400 handling — bad/old file → delete + continue cold. *(design: Failure modes)*
+- ✅ Invalidation events — router restart (all desks) / child unload (per-model) /
       proxy restart (all cold). *(design: Desk state — Invalidation events)*
-- ⬜ `erase` action — optional tool to force a known-empty slot. *(design: Primitives)*
+- ✅ `erase` action — optional tool to force a known-empty slot. *(design: Primitives)*
 
 **Done when:** A→B→A wastes no restore; a server restart lazy-restores on first
 switch; a corrupt file 400s to cold.
@@ -298,3 +298,14 @@ same id, fork -> two ids, header respected+sanitized, derive_id deterministic.
 **Lessons**: thrashing guard pauses on >1 switch (threshold=1 means >=2), re-engages
 when switches drop to <=hysteresis (0). LRU evict never touches protected (in-slot)
 convs. The server does the .tmp+rename; the proxy only deletes stale .tmp at startup.
+
+## [2026-09-30] — Session 7
+**Task**: Phase 4 — Restore (trigger, drain, save-first, 400 handling, invalidation).
+**Changes**:
+- `src/restore.py` — decide() -> (RestoreAction, conv_to_save): FORWARD_WARM (C in
+  tree), RESTORE / SAVE_THEN_RESTORE (C not in tree, file exists), FORWARD_COLD
+  (no file or in_flight != 0). handle_restore_400() (delete file). invalidate_all/
+  invalidate_model (router restart / child unload).
+**Lessons**: restore is destructive (clears live tree) -> must drain (in_flight==0)
+and save the displaced conv first. 400 = delete file + continue cold (server
+full-prefills). Invalidation = mark_all_dirty (all sets = ∅).
