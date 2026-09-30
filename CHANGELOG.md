@@ -18,7 +18,7 @@ step.** Spec: `llamacpp-autosave-proxy-design.md` (source of truth). Workflow:
 
 | # | Phase | Status | Notes |
 |---|---|---|---|
-| 0 | Scaffolding | 🔨 | entry point, config (load/generate), transparent forward |
+| 0 | Scaffolding | ✅ | entry point, config (load/generate), transparent forward |
 | 1 | Endpoint routing | ✅ | route table, desk-dirty, slot count, `{model}/{conv}.bin` |
 | 2 | Conversation keying | ✅ | content-derived id, tail match, forks, sanitize |
 | 3 | Save | ✅ | trigger, tmp+rename, ledger, LRU, thrashing guard |
