@@ -1,57 +1,30 @@
 # proxycache
 
-Transparent proxy in front of `llama-server` (beellama.cpp fork) that auto-persists slot
-KV state to disk so conversations survive server restarts. **Zero client-side config** —
-clients never install plugins or set headers.
+Transparent proxy in front of `llama-server` (beellama.cpp fork) that auto-persists
+slot KV state to disk so conversations survive server restarts. **Zero client-side
+config** — clients never install plugins or set headers.
 
-## Status
+## Run
 
-**Design complete · implementation not started.**
+```
+venv/bin/python proxycache.py [flags]
+```
 
-| Artifact | State |
+| Flag | Meaning |
 |---|---|
-| Design doc | ✅ complete — `llamacpp-autosave-proxy-design.md` |
-| Build plan | ✅ scaffolded — `PLAN.md` |
-| Implementation | ⬜ not started (track in `PLAN.md`) |
+| (none) | serve the proxy (default) |
+| `--config <path>` | config file location (default `./config.json`) |
+| `--generate-config` | print every key with default + accepted values + description |
+| `--version` | print version |
 
-## Files
+There is no TUI — no flags means it serves.
 
-- **`llamacpp-autosave-proxy-design.md`** — the design: mechanism, save/restore events,
-  desk state, failure modes, config, provenance (verified against source at a pinned
-  commit), test strategy. **Read this first** — it is the source of truth.
-- **`PLAN.md`** — the build: phased task breakdown with checkboxes, each task mapped to
-  the design section it implements. **Track progress here.**
+## Config
 
-## Workflow
-
-1. **Design is the source of truth.** If implementation reveals a design gap, update the
-   design doc first (it carries provenance), then the plan. Never let the two drift.
-2. **Work `PLAN.md` top-to-bottom.** Check off a task only when it lands *and* is tested.
-3. **Keep the task→design link honest.** Every task cites the design section it
-   implements; if that section changes, re-read the task.
-
-## Commits
-
-Conventional Commits, one logical change per commit. **Checkpoint commits at phase
-boundaries.**
-
-**Format:** `<type>: <imperative summary>` (≤ ~72 chars, no trailing period).
-Optional elaboration after an em-dash:
-`feat: drain before switch — restore lands on an empty slot`.
-
-**Types:**
-
-| Type | Use for |
-|---|---|
-| `feat` | a phase / new behavior |
-| `fix` | a bug fix |
-| `docs` | design doc / tracking files |
-| `refactor` | restructuring without behavior change |
-| `test` | tests |
-| `chore` | deps, config, scaffolding |
-| `perf` | performance |
-
-(No `ui` — there's no TUI.)
+Single `config.json`, self-documenting. `--generate-config` prints every key with
+its default, accepted values, and a one-line description. Run `--generate-config`
+once to see them all; the full knob table (defaults, accepted domains) is in the
+spec's **Configuration** section.
 
 ## Ground rules (carried from the design)
 
@@ -67,3 +40,10 @@ Optional elaboration after an em-dash:
   the proxy's action log goes stale silently.
 - **Shared filesystem** — the server *writes* `.bin` files (`--slot-save-path`); the
   proxy *deletes* them; both must see the same path (same host or shared volume).
+
+## Files
+
+- **`llamacpp-autosave-proxy-design.md`** — the spec: mechanism, save/restore events,
+  desk state, failure modes, config, provenance, test strategy. **The source of truth.**
+- **`AGENTS.md`** — how to work in this repo (workflow, conventions).
+- **`CHANGELOG.md`** — build log + phase tracker + work queue. **Track progress here.**

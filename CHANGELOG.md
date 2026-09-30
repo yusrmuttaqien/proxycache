@@ -1,16 +1,45 @@
-# Build Plan
+# Changelog — proxycache
 
-Phased task breakdown for the slot auto-save proxy. Each task cites the **design
-section** it implements (`llamacpp-autosave-proxy-design.md`). Check a box only when the
-task lands **and** is tested. Phases are ordered so each one is independently runnable.
+Build log + phase tracker. **Read this before working; append after every meaningful
+step.** Spec: `llamacpp-autosave-proxy-design.md` (source of truth). Workflow:
+`AGENTS.md`.
 
-**Progress legend:** ⬜ not started · 🟨 in progress · ✅ done (+tested)
+**Log entry format** (append, never overwrite user entries):
 
-**Overall:** ⬜ 0 / 9 phases
+```
+## [YYYY-MM-DD] — Session N
+**Task**: <what was requested>
+**Changes**:
+- <file> — <what changed>
+**Lessons**: <reusable insight, if any>
+```
+
+## Phases
+
+| # | Phase | Status | Notes |
+|---|---|---|---|
+| 0 | Scaffolding | ⬜ | entry point, config (load/generate), transparent forward |
+| 1 | Endpoint routing | ⬜ | route table, desk-dirty, slot count, `{model}/{conv}.bin` |
+| 2 | Conversation keying | ⬜ | content-derived id, tail match, forks, sanitize |
+| 3 | Save | ⬜ | trigger, tmp+rename, ledger, LRU, thrashing guard |
+| 4 | Restore | ⬜ | trigger, drain, idempotent, invalidation, `erase` |
+| 5 | Slot allocator | ⬜ | `id_slot`, conv→slot, allocation |
+| 6 | Shifted-suffix | ⬜ | detect+delete, `n_cache_reuse` |
+| 7 | Robustness | ⬜ | 400/cold, degraded, timeouts, conn drop, health poll |
+| 8 | Observability / Miss debugger | ⬜ | taxonomy, artifacts, log levels |
+| 9 | Testing | ⬜ | unit, integration, property |
+
+Status legend: ⬜ not started · 🔨 in progress · ✅ done (+tested)
 
 ---
 
-## Phase 0 — Scaffolding
+## Work queue (detailed, per phase)
+
+Each task cites the **design section** it implements
+(`llamacpp-autosave-proxy-design.md`). Check a box only when the task lands **and** is
+tested. Phases are ordered so each is independently runnable.
+
+### Phase 0 — Scaffolding
 
 Goal: a config-driven transparent reverse proxy that forwards a chat request
 byte-identically. **Structure mirrors `skill-sync-script`.**
@@ -36,9 +65,7 @@ byte-identically. **Structure mirrors `skill-sync-script`.**
 flows proxy→server→client byte-identical; `--generate-config` prints the self-doc
 config; `config.json` auto-creates with defaults.
 
----
-
-## Phase 1 — Endpoint routing
+### Phase 1 — Endpoint routing
 
 Goal: intercept chat; pass-through everything else; track desk dirtiness.
 
@@ -54,9 +81,7 @@ Goal: intercept chat; pass-through everything else; track desk dirtiness.
 **Done when:** chat is intercepted; an `/embeddings` call marks the desk dirty;
 slot count is known; files land under `{model}/`.
 
----
-
-## Phase 2 — Conversation keying
+### Phase 2 — Conversation keying
 
 Goal: identify conversations with zero client cooperation.
 
@@ -74,9 +99,7 @@ Goal: identify conversations with zero client cooperation.
 **Done when:** two turns of a conv → same id; a fork → two ids; a declared header id
 is respected and sanitized.
 
----
-
-## Phase 3 — Save
+### Phase 3 — Save
 
 Goal: persist a conversation's slot to disk at the right moments, bounded.
 
@@ -97,9 +120,7 @@ Goal: persist a conversation's slot to disk at the right moments, bounded.
 **Done when:** a conv saves at its turn boundary; eviction respects both caps; the
 guard pauses under A/B/A/B thrash.
 
----
-
-## Phase 4 — Restore
+### Phase 4 — Restore
 
 Goal: reload a conversation from disk exactly when it isn't in the live tree.
 
@@ -118,9 +139,7 @@ Goal: reload a conversation from disk exactly when it isn't in the live tree.
 **Done when:** A→B→A wastes no restore; a server restart lazy-restores on first
 switch; a corrupt file 400s to cold.
 
----
-
-## Phase 5 — Slot allocator
+### Phase 5 — Slot allocator
 
 Goal: the proxy authoritatively assigns convs to slots.
 
@@ -132,9 +151,7 @@ Goal: the proxy authoritatively assigns convs to slots.
 **Done when:** the proxy knows every conv's slot with zero guessing; single-slot is
 the one-row degenerate case; multi-slot allocates correctly.
 
----
-
-## Phase 6 — Shifted-suffix (compaction / head change / middle edit)
+### Phase 6 — Shifted-suffix (compaction / head change / middle edit)
 
 Goal: detect rewrites, prune dead files, slide KV.
 
@@ -147,9 +164,7 @@ Goal: detect rewrites, prune dead files, slide KV.
 **Done when:** a compaction **and** a cwd-move both delete the old file and inject
 `n_cache_reuse` on that one request.
 
----
-
-## Phase 7 — Robustness
+### Phase 7 — Robustness
 
 Goal: the proxy's own failures degrade to cold, never down.
 
@@ -165,9 +180,7 @@ Goal: the proxy's own failures degrade to cold, never down.
 **Done when:** a server restart is detected via the health poll; every control-call
 failure degrades to cold without blocking chat.
 
----
-
-## Phase 8 — Observability / Miss debugger
+### Phase 8 — Observability / Miss debugger
 
 Goal: every miss is diagnosable from logs.
 
@@ -180,9 +193,7 @@ Goal: every miss is diagnosable from logs.
 
 **Done when:** a full-prefill is fully explained by its log line (which bucket, why).
 
----
-
-## Phase 9 — Testing
+### Phase 9 — Testing
 
 Goal: the design's test strategy, green.
 
@@ -198,8 +209,6 @@ Goal: the design's test strategy, green.
 
 **Done when:** all unit + integration + property tests pass against the pinned commit.
 
----
-
 ## Decisions
 
 - ✅ **Runtime/language** — **Python 3.12** (provided `venv/`); structure mirrors
@@ -209,3 +218,9 @@ Goal: the design's test strategy, green.
 - ⬜ **Pinned server commit** — re-run the design doc's re-verification checklist
       against the current `beellama.cpp` HEAD before first build; record the commit
       here.
+
+---
+
+## Log
+
+_(no sessions yet — Phase 0 starts the log)_
