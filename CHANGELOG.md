@@ -199,15 +199,17 @@ Goal: the design's test strategy, green.
 
 - ⬜ Unit — tail matcher (extend/fork/shifted-suffix), LRU + hysteresis, filename
       sanitization, ledger math, tmp/rename. *(design: Test strategy — Unit)*
-- ⬜ Integration — 8 scenarios against a real `llama-server` at the pinned commit
-      (round-trip, A→B→A no-waste, shifted-suffix delete, thrashing, restore-400,
-      proxy restart, drain, idempotency). *(design: Test strategy — Integration)*
+- ⬜ Integration — 8 scenarios against a real `llama-server` at the bee fork commit
+      (upstream + cherry-pick as cross-check): round-trip, A→B→A no-waste, shifted-suffix
+      delete, thrashing, restore-400, proxy restart, drain, idempotency.
+      *(design: Test strategy — Integration)*
 - ⬜ Property — saves idempotent (≤1 save/restore); eviction never removes an in-slot
       conv; guard hysteresis bounded; **no-strain invariants** (event-driven only /
       save-idle + restore-empty / guard-OFF = zero control calls / serialized control
       calls). *(design: event table — No-strain invariants; Test strategy — Property)*
 
-**Done when:** all unit + integration + property tests pass against the pinned commit.
+**Done when:** all unit + integration + property tests pass against the bee fork
+commit (upstream + cherry-pick as cross-check).
 
 ## Decisions
 
@@ -215,12 +217,23 @@ Goal: the design's test strategy, green.
       `skill-sync-script`. *(closed)*
 - ✅ **Config** — single `config.json`, self-documenting (`--generate-config`),
       file > default precedence. *(closed — see design Configuration)*
-- ⬜ **Pinned server commit** — re-run the design doc's re-verification checklist
-      against the current `beellama.cpp` HEAD before first build; record the commit
-      here.
+- ✅ **Reference trees** — verified against **both** (not pinned to one): bee fork
+      `0ba48c55` and upstream `25747b08` + #25592 + #26004. 11-item checklist: 10/11
+      pass on both; item 9 (`prompt_cache_source = "ram"` reporting) is fork-only.
+      Phase 9 tests run against the bee fork, with upstream + cherry-pick as a
+      cross-check. *(closed — see design Resources & provenance)*
 
 ---
 
 ## Log
 
-_(no sessions yet — Phase 0 starts the log)_
+## [2026-01-08] — Session 1
+**Task**: Verify the design against both reference trees (bee fork + upstream +
+cherry-pick) instead of pinning to one; document the results.
+**Changes**:
+- `llamacpp-autosave-proxy-design.md` — Resources & provenance now says "verified
+  against two reference trees (not pinned to one)"; added the 11-item verification
+  table (10/11 pass on both; item 9 fork-only) + the fork-only difference note.
+**Lessons**: "Full verification" = the design's own 11-item re-verification
+checklist. #26004 cherry-picks cleanly onto master `25747b08`; the KV-tier mechanism
+is upstream, the fork only adds the `prompt_cache_source` reporting string.
