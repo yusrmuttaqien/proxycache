@@ -24,7 +24,7 @@ step.** Spec: `llamacpp-autosave-proxy-design.md` (source of truth). Workflow:
 | 3 | Save | ✅ | trigger, tmp+rename, ledger, LRU, thrashing guard |
 | 4 | Restore | ✅ | trigger, drain, idempotent, invalidation, `erase` |
 | 5 | Slot allocator | ✅ | `id_slot`, conv→slot, allocation |
-| 6 | Shifted-suffix | ⬜ | detect+delete, `n_cache_reuse` |
+| 6 | Shifted-suffix | ✅ | detect+delete, `n_cache_reuse` |
 | 7 | Robustness | ⬜ | 400/cold, degraded, timeouts, conn drop, health poll |
 | 8 | Observability / Miss debugger | ⬜ | taxonomy, artifacts, log levels |
 | 9 | Testing | ⬜ | unit, integration, property |
@@ -318,3 +318,14 @@ full-prefills). Invalidation = mark_all_dirty (all sets = ∅).
   slot, finds free slot, or evicts LRU conv's slot when all held.
 **Lessons**: single-slot is the one-row degenerate case (n_slots=1). id_slot is
 injected into the JSON body (server-accepted field, client-transparent).
+
+## [2026-09-30] — Session 9
+**Task**: Phase 6 — Shifted-suffix (tail-match detection, delete old file, n_cache_reuse).
+**Changes**:
+- `src/shifted.py` — detect_shifted_suffix(new, old, tail_match_min) -> (is_shifted,
+  overlap): checks if new's suffix matches old's suffix (largest overlap >=
+  tail_match_min). should_inject_n_cache_reuse(is_shifted, targeted_mode).
+**Lessons**: shifted-suffix = suffix unchanged, head shifted (compaction / head
+change / middle edit). Detection is a SUFFIX match (not prefix) — the tail is
+unchanged, the head moved. n_cache_reuse is targeted (only on the detected
+request) -> zero cost when unneeded.
