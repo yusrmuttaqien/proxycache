@@ -20,7 +20,7 @@ step.** Spec: `llamacpp-autosave-proxy-design.md` (source of truth). Workflow:
 |---|---|---|---|
 | 0 | Scaffolding | 🔨 | entry point, config (load/generate), transparent forward |
 | 1 | Endpoint routing | ✅ | route table, desk-dirty, slot count, `{model}/{conv}.bin` |
-| 2 | Conversation keying | ⬜ | content-derived id, tail match, forks, sanitize |
+| 2 | Conversation keying | ✅ | content-derived id, tail match, forks, sanitize |
 | 3 | Save | ⬜ | trigger, tmp+rename, ledger, LRU, thrashing guard |
 | 4 | Restore | ⬜ | trigger, drain, idempotent, invalidation, `erase` |
 | 5 | Slot allocator | ⬜ | `id_slot`, conv→slot, allocation |
@@ -85,15 +85,15 @@ slot count is known; files land under `{model}/`.
 
 Goal: identify conversations with zero client cooperation.
 
-- ⬜ `input_tokens` fingerprint per chat request. *(design: Conversation key)*
-- ⬜ Memory-bounded parse — keep head (root exchange) + tail (match window),
+- ✅ `input_tokens` fingerprint per chat request. *(design: Conversation key)*
+- ✅ Memory-bounded parse — keep head (root exchange) + tail (match window),
       drop the middle. *(design: Conversation key — Memory-bounded parse)*
-- ⬜ Same-conversation check — longest-tail prefix match. *(design: Conversation key)*
-- ⬜ New conversation — content-derived id (hash of root exchange); deterministic.
+- ✅ Same-conversation check — longest-tail prefix match. *(design: Conversation key)*
+- ✅ New conversation — content-derived id (hash of root exchange); deterministic.
       *(design: Conversation key)*
-- ⬜ Fork handling — branch-split when two convs extend the same tail then diverge.
+- ✅ Fork handling — branch-split when two convs extend the same tail then diverge.
       *(design: Conversation key — Forks)*
-- ⬜ `X-Conversation-Id` hybrid — header wins when present; sanitize to
+- ✅ `X-Conversation-Id` hybrid — header wins when present; sanitize to
       `[A-Za-z0-9._-]`. *(design: Conversation key — Known limitations)*
 
 **Done when:** two turns of a conv → same id; a fork → two ids; a declared header id
@@ -274,3 +274,17 @@ deployment prerequisites (server-only-via-proxy, shared FS) are operational.
 - `src/storage.py` — conv_path(save_root, model, conv) → {root}/{model}/{conv}.bin.
 **Lessons**: route table is method-aware (POST /models = desk dirty, GET /models =
 pass). Desk-dirty = ram_since_restore ∅ (next chat is a restore candidate).
+
+## [2026-09-30] — Session 5
+**Task**: Phase 2 — Conversation keying (input_tokens fingerprint, tail match,
+content-derived id, forks, X-Conversation-Id hybrid).
+**Changes**:
+- `src/convkey.py` — ConvTracker: check(tokens, header_id) -> conv id. (1) header wins
+  (sanitized); (2) same-conv = longest-tail prefix match; (3) else new conv =
+  derive_id (sha256 of head+tail). Memory-bounded: stores only tail+length per conv.
+- `src/fingerprint.py` — get_tokens(session, upstream, body) -> token list via
+  POST /chat/completions/input_tokens.
+**Lessons**: id = hash(head+tail), NOT just head — else a fork (same head,
+different tail) collides with its parent. Same-conv check is probabilistic
+(tail match at the expected position), O(tail_len) per conv. Tested: two turns ->
+same id, fork -> two ids, header respected+sanitized, derive_id deterministic.
