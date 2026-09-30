@@ -30,6 +30,29 @@ clients never install plugins or set headers.
 3. **Keep the task→design link honest.** Every task cites the design section it
    implements; if that section changes, re-read the task.
 
+## Commits
+
+Conventional Commits, one logical change per commit. **Checkpoint commits at phase
+boundaries.**
+
+**Format:** `<type>: <imperative summary>` (≤ ~72 chars, no trailing period).
+Optional elaboration after an em-dash:
+`feat: drain before switch — restore lands on an empty slot`.
+
+**Types:**
+
+| Type | Use for |
+|---|---|
+| `feat` | a phase / new behavior |
+| `fix` | a bug fix |
+| `docs` | design doc / tracking files |
+| `refactor` | restructuring without behavior change |
+| `test` | tests |
+| `chore` | deps, config, scaffolding |
+| `perf` | performance |
+
+(No `ui` — there's no TUI.)
+
 ## Ground rules (carried from the design)
 
 - **Zero client cooperation** — the proxy fingerprints conversations itself from
