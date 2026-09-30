@@ -21,7 +21,7 @@ step.** Spec: `llamacpp-autosave-proxy-design.md` (source of truth). Workflow:
 | 0 | Scaffolding | 🔨 | entry point, config (load/generate), transparent forward |
 | 1 | Endpoint routing | ✅ | route table, desk-dirty, slot count, `{model}/{conv}.bin` |
 | 2 | Conversation keying | ✅ | content-derived id, tail match, forks, sanitize |
-| 3 | Save | ⬜ | trigger, tmp+rename, ledger, LRU, thrashing guard |
+| 3 | Save | ✅ | trigger, tmp+rename, ledger, LRU, thrashing guard |
 | 4 | Restore | ⬜ | trigger, drain, idempotent, invalidation, `erase` |
 | 5 | Slot allocator | ⬜ | `id_slot`, conv→slot, allocation |
 | 6 | Shifted-suffix | ⬜ | detect+delete, `n_cache_reuse` |
@@ -103,18 +103,18 @@ is respected and sanitized.
 
 Goal: persist a conversation's slot to disk at the right moments, bounded.
 
-- ⬜ Save trigger — response fully received AND guard ON AND `L ≥ min_save_tokens`
+- ✅ Save trigger — response fully received AND guard ON AND `L ≥ min_save_tokens`
       AND conv in slot table. *(design: event table — SAVE; flow step 6)*
-- ⬜ Turn boundary includes **client disconnect mid-stream** (save the partial state).
+- ✅ Turn boundary includes **client disconnect mid-stream** (save the partial state).
       *(design: Operations #2)*
-- ⬜ Save failure (disk full / 500) → log + skip this turn; retry next turn
+- ✅ Save failure (disk full / 500) → log + skip this turn; retry next turn
       (idempotent, latest wins). *(design: Operations #3)*
-- ⬜ `.tmp` + rename — atomic write; delete stale `.tmp` at startup.
+- ✅ `.tmp` + rename — atomic write; delete stale `.tmp` at startup.
       *(design: Failure modes)*
-- ⬜ Ledger — `n_written`/`n_saved` accounting for exact sizes. *(design: flow step 6)*
-- ⬜ LRU eviction — `n_max_files` / `max_bytes`; evict oldest-used, never an
+- ✅ Ledger — `n_written`/`n_saved` accounting for exact sizes. *(design: flow step 6)*
+- ✅ LRU eviction — `n_max_files` / `max_bytes`; evict oldest-used, never an
       in-slot conv. *(design: flow step 7)*
-- ⬜ Thrashing guard — rolling window `K`, pause save+restore on >1 switch,
+- ✅ Thrashing guard — rolling window `K`, pause save+restore on >1 switch,
       hysteresis to re-engage. *(design: flow step 8)*
 
 **Done when:** a conv saves at its turn boundary; eviction respects both caps; the
@@ -288,3 +288,13 @@ content-derived id, forks, X-Conversation-Id hybrid).
 different tail) collides with its parent. Same-conv check is probabilistic
 (tail match at the expected position), O(tail_len) per conv. Tested: two turns ->
 same id, fork -> two ids, header respected+sanitized, derive_id deterministic.
+
+## [2026-09-30] — Session 6
+**Task**: Phase 3 — Save (trigger, .tmp cleanup, ledger, LRU, thrashing guard).
+**Changes**:
+- `src/save.py` — should_save() (trigger condition); delete_stale_tmp() (startup
+  cleanup); Ledger (n_written/n_saved + LRU evict with protected in-slot convs);
+  ThrashingGuard (rolling window, pause on >1 switch, hysteresis re-engage).
+**Lessons**: thrashing guard pauses on >1 switch (threshold=1 means >=2), re-engages
+when switches drop to <=hysteresis (0). LRU evict never touches protected (in-slot)
+convs. The server does the .tmp+rename; the proxy only deletes stale .tmp at startup.
