@@ -227,7 +227,7 @@ commit (upstream + cherry-pick as cross-check).
 
 ## Log
 
-## [2026-01-08] — Session 1
+## [2026-09-30] — Session 1
 **Task**: Verify the design against both reference trees (bee fork + upstream +
 cherry-pick) instead of pinning to one; document the results.
 **Changes**:
@@ -238,7 +238,7 @@ cherry-pick) instead of pinning to one; document the results.
 checklist. #26004 cherry-picks cleanly onto master `25747b08`; the KV-tier mechanism
 is upstream, the fork only adds the `prompt_cache_source` reporting string.
 
-## [2026-01-08] — Session 2
+## [2026-09-30] — Session 2
 **Task**: Phase 0 items 1–3 — entry point, flags, config system.
 **Changes**:
 - `proxycache.py` — root thin wrapper → `src.__main__.main()`.
@@ -252,7 +252,7 @@ is upstream, the fork only adds the `prompt_cache_source` reporting string.
 `load_config` deep-merges the file over defaults). Tested: all 3 flags + override-wins
 + partial-merge-with-defaults.
 
-## [2026-01-08] — Session 3
+## [2026-09-30] — Session 3
 **Task**: Phase 0 items 4-5 — requirements.txt + transparent forward.
 **Changes**:
 - `requirements.txt` — pinned deps (aiohttp 3.14.3).
@@ -263,7 +263,7 @@ is upstream, the fork only adds the `prompt_cache_source` reporting string.
 query, streaming in chunks) + 502 on dead upstream. Phase 0 "Done when" gate met;
 deployment prerequisites (server-only-via-proxy, shared FS) are operational.
 
-## [2026-01-08] — Session 4
+## [2026-09-30] — Session 4
 **Task**: Phase 1 — Endpoint routing (route table, desk-dirty, slot count, path layout).
 **Changes**:
 - `src/routes.py` — route table: classify(method, path, query) → Action (INTERCEPT,
