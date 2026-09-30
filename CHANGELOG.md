@@ -23,7 +23,7 @@ step.** Spec: `llamacpp-autosave-proxy-design.md` (source of truth). Workflow:
 | 2 | Conversation keying | ✅ | content-derived id, tail match, forks, sanitize |
 | 3 | Save | ✅ | trigger, tmp+rename, ledger, LRU, thrashing guard |
 | 4 | Restore | ✅ | trigger, drain, idempotent, invalidation, `erase` |
-| 5 | Slot allocator | ⬜ | `id_slot`, conv→slot, allocation |
+| 5 | Slot allocator | ✅ | `id_slot`, conv→slot, allocation |
 | 6 | Shifted-suffix | ⬜ | detect+delete, `n_cache_reuse` |
 | 7 | Robustness | ⬜ | 400/cold, degraded, timeouts, conn drop, health poll |
 | 8 | Observability / Miss debugger | ⬜ | taxonomy, artifacts, log levels |
@@ -143,9 +143,9 @@ switch; a corrupt file 400s to cold.
 
 Goal: the proxy authoritatively assigns convs to slots.
 
-- ⬜ `id_slot` injection into every chat body (always on). *(design: Slot awareness)*
-- ⬜ conv → slot table per model. *(design: Desk state)*
-- ⬜ Allocation — new conv, all slots held → LRU conv's slot; save displaced first.
+- ✅ `id_slot` injection into every chat body (always on). *(design: Slot awareness)*
+- ✅ conv → slot table per model. *(design: Desk state)*
+- ✅ Allocation — new conv, all slots held → LRU conv's slot; save displaced first.
       *(design: Slot awareness — Allocation)*
 
 **Done when:** the proxy knows every conv's slot with zero guessing; single-slot is
@@ -309,3 +309,12 @@ convs. The server does the .tmp+rename; the proxy only deletes stale .tmp at sta
 **Lessons**: restore is destructive (clears live tree) -> must drain (in_flight==0)
 and save the displaced conv first. 400 = delete file + continue cold (server
 full-prefills). Invalidation = mark_all_dirty (all sets = ∅).
+
+## [2026-09-30] — Session 8
+**Task**: Phase 5 — Slot allocator (id_slot injection, conv->slot table, allocation).
+**Changes**:
+- `src/allocator.py` — inject_id_slot(body, slot) (always on, client never sees it);
+  SlotAllocator: allocate(conv, lru_order) -> (slot, conv_to_evict). Reuses existing
+  slot, finds free slot, or evicts LRU conv's slot when all held.
+**Lessons**: single-slot is the one-row degenerate case (n_slots=1). id_slot is
+injected into the JSON body (server-accepted field, client-transparent).
