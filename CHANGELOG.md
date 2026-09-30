@@ -26,7 +26,7 @@ step.** Spec: `llamacpp-autosave-proxy-design.md` (source of truth). Workflow:
 | 5 | Slot allocator | ✅ | `id_slot`, conv→slot, allocation |
 | 6 | Shifted-suffix | ✅ | detect+delete, `n_cache_reuse` |
 | 7 | Robustness | ✅ | 400/cold, degraded, timeouts, conn drop, health poll |
-| 8 | Observability / Miss debugger | ⬜ | taxonomy, artifacts, log levels |
+| 8 | Observability / Miss debugger | ✅ | taxonomy, artifacts, log levels |
 | 9 | Testing | ⬜ | unit, integration, property |
 
 Status legend: ⬜ not started · 🔨 in progress · ✅ done (+tested)
@@ -184,11 +184,11 @@ failure degrades to cold without blocking chat.
 
 Goal: every miss is diagnosable from logs.
 
-- ⬜ Structured logs at INFO / DEBUG / TRACE. *(design: Miss debugger — Log levels)*
-- ⬜ Per-request correlation record — proxy verdict + server verdict
+- ✅ Structured logs at INFO / DEBUG / TRACE. *(design: Miss debugger — Log levels)*
+- ✅ Per-request correlation record — proxy verdict + server verdict
       (`n_prompt_tokens_cache`, `timings.cache_*`) + actions. *(design: Miss debugger)*
-- ⬜ Miss taxonomy classification (6 buckets). *(design: Miss debugger)*
-- ⬜ Debug artifacts — JSON per new-conv event (divergence window, hashes),
+- ✅ Miss taxonomy classification (6 buckets). *(design: Miss debugger)*
+- ✅ Debug artifacts — JSON per new-conv event (divergence window, hashes),
       rotated + bounded. *(design: Miss debugger — Debug artifacts)*
 
 **Done when:** a full-prefill is fully explained by its log line (which bucket, why).
@@ -342,3 +342,13 @@ request) -> zero cost when unneeded.
 fail -> pass through unmodified (never drop the request). input_tokens failure ->
 retry once, then degraded pass-through + desk dirty. Health poll detects router
 restart.
+
+## [2026-09-30] — Session 11
+**Task**: Phase 8 — Observability (miss classification, metrics, X-Conversation-Id echo).
+**Changes**:
+- `src/observability.py` — MissReason enum (NO_FILE/RESTORE_400/BELOW_MIN/
+  THRASH_PAUSED/COLD); RequestMetrics (n_prompt/n_kv_self/n_ctx/n_saved/n_written);
+  classify_miss() -> MissReason; echo_conversation_id(); log_ram_since_restore().
+**Lessons**: a full-prefill is fully explained by its log line (which bucket, why).
+Miss taxonomy: NO_FILE (no file), RESTORE_400 (bad file), BELOW_MIN (L < min),
+THRASH_PAUSED (guard paused), COLD (forward cold).
