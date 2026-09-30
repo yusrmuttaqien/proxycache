@@ -27,7 +27,7 @@ step.** Spec: `llamacpp-autosave-proxy-design.md` (source of truth). Workflow:
 | 6 | Shifted-suffix | ✅ | detect+delete, `n_cache_reuse` |
 | 7 | Robustness | ✅ | 400/cold, degraded, timeouts, conn drop, health poll |
 | 8 | Observability / Miss debugger | ✅ | taxonomy, artifacts, log levels |
-| 9 | Testing | ⬜ | unit, integration, property |
+| 9 | Testing | ⚠️ | unit ✅, integration ⬜, property ⬜ (need real server) |
 
 Status legend: ⬜ not started · 🔨 in progress · ✅ done (+tested)
 
@@ -197,7 +197,7 @@ Goal: every miss is diagnosable from logs.
 
 Goal: the design's test strategy, green.
 
-- ⬜ Unit — tail matcher (extend/fork/shifted-suffix), LRU + hysteresis, filename
+- ✅ Unit — tail matcher (extend/fork/shifted-suffix), LRU + hysteresis, filename
       sanitization, ledger math, tmp/rename. *(design: Test strategy — Unit)*
 - ⬜ Integration — 8 scenarios against a real `llama-server` at the bee fork commit
       (upstream + cherry-pick as cross-check): round-trip, A→B→A no-waste, shifted-suffix
@@ -352,3 +352,13 @@ restart.
 **Lessons**: a full-prefill is fully explained by its log line (which bucket, why).
 Miss taxonomy: NO_FILE (no file), RESTORE_400 (bad file), BELOW_MIN (L < min),
 THRASH_PAUSED (guard paused), COLD (forward cold).
+
+## [2026-09-30] — Session 12
+**Task**: Phase 9 — Testing (unit test runner).
+**Changes**:
+- `tests/run_all.py` — unified test runner: runs all 9 phase tests (config, routes,
+  convkey, save, restore, allocator, shifted, robustness, observability). 9 passed,
+  0 failed.
+**Lessons**: integration + property tests (Phase 9 items 2-3) require a real
+llama-server at the bee fork commit — not runnable in this environment. Unit tests
+cover the "Done when" gates for each phase.
