@@ -12,16 +12,46 @@ more desks as models/users are added. No redesign.
 
 ## Resources & provenance
 
-All server behavior in this doc was verified against **real source**, not docs:
+All server behavior in this doc was verified against **real source**, not docs, and is
+**verified against two reference trees** (not pinned to one):
 
-- **Repo**: `https://github.com/Anbeeld/beellama.cpp`
-- **Commit**: `0ba48c55a17cb4d3f5f1bd76bba8ee52fdb2573f` (2026-09-25, "Merge branch 'v0.4.7'")
-- **Upstream context**: ggml-org/llama.cpp issue #18703 (router mode save/restore) — the fork
-  proxies slot actions to the owning child server.
+- **Bee fork** (`https://github.com/Anbeeld/beellama.cpp`), commit
+  `0ba48c55a17cb4d3f5f1bd76bba8ee52fdb2573f` (2026-09-25, "Merge branch 'v0.4.7'") —
+  the fork the user runs.
+- **Upstream** (`ggml-org/llama.cpp`), master `25747b08` + cherry-picks
+  **#25592** (hybrid/recurrent `pos_min=pos_max` restore fix) + **#26004**
+  (`SCKP` checkpoint appendix). The KV-tier mechanism (`server_prompt_cache`,
+  `prompt_save`/`prompt_load`, `cache_idle_slots`) is already in upstream master; the
+  two cherry-picks add the checkpoint logic the hybrid/recurrent model needs. `#26004`
+  cherry-picks cleanly onto `25747b08` (auto-merge, no conflicts); `#25592` is the same
+  kind of additive checkpoint change.
+
+**Verification — 11-item checklist, run against both trees:**
+
+| # | Check | Bee `0ba48c55` | Upstream `25747b08` + #25592 + #26004 |
+|---|---|---|---|
+| 1 | save/restore actions | ✓ | ✓ |
+| 2 | `n_saved`/`n_written` fields | ✓ | ✓ |
+| 3 | route table | ✓ | ✓ |
+| 4 | `input_tokens` fingerprint | ✓ | ✓ |
+| 5 | `n_cache_reuse` per-request | ✓ | ✓ |
+| 6 | embedding/rerank slot-based | ✓ | ✓ |
+| 7 | slot pinning/reporting (`id_slot`) | ✓ | ✓ |
+| 8 | erase action | ✓ | ✓ |
+| 9 | RAM-tier auto-restore reporting (`prompt_cache_source = "ram"`) | ✓ | **✗ fork-only** |
+| 10 | slot-selection ladder | ✓ | ✓ |
+| 11 | queue deferral | ✓ | ✓ |
+
+**One fork-only difference (item 9):** upstream has the RAM-tier *mechanism*
+(`prompt_save`/`prompt_load`, `cache_idle_slots`) but not the fork's
+`prompt_cache_source = "ram"` *reporting string*. The proxy's miss-debugger
+`cache_source` bucket reads that string; against upstream it must derive the source
+from a different signal (e.g. presence of a checkpoint / `n_cache_reuse`), not the
+fork's string. Every other primitive the proxy drives is identical in both trees.
 
 **Key source references (claim → location):**
 
-| Claim in this doc | Location (at the pinned commit) |
+| Claim in this doc | Location (at the bee fork commit `0ba48c55`; line numbers drift on upstream) |
 |---|---|
 | Route table (all endpoints) | `tools/server/server.cpp` (~lines 260–340) |
 | `action=save` / `restore` / **`erase`** dispatch; 400 without `--slot-save-path` | `tools/server/server-context.cpp` ~5543–5570; `handle_slots_erase` ~6141 |
@@ -68,8 +98,9 @@ grep -n 'selected slot by' tools/server/server-context.cpp
 grep -n 'no slot is available, defer task' tools/server/server-context.cpp
 ```
 
-If the pinned commit moved, re-run this checklist and update the file:line table — line
-numbers drift, the grep anchors are the stable references.
+If **either** reference tree moves (fork rebase, upstream master advance, or a cherry-pick
+amended), re-run this checklist against both and update the file:line table — line numbers
+drift, the grep anchors are the stable references.
 
 ## Primitives (from the server)
 
