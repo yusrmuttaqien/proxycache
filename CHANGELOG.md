@@ -19,7 +19,7 @@ step.** Spec: `llamacpp-autosave-proxy-design.md` (source of truth). Workflow:
 | # | Phase | Status | Notes |
 |---|---|---|---|
 | 0 | Scaffolding | 🔨 | entry point, config (load/generate), transparent forward |
-| 1 | Endpoint routing | ⬜ | route table, desk-dirty, slot count, `{model}/{conv}.bin` |
+| 1 | Endpoint routing | ✅ | route table, desk-dirty, slot count, `{model}/{conv}.bin` |
 | 2 | Conversation keying | ⬜ | content-derived id, tail match, forks, sanitize |
 | 3 | Save | ⬜ | trigger, tmp+rename, ledger, LRU, thrashing guard |
 | 4 | Restore | ⬜ | trigger, drain, idempotent, invalidation, `erase` |
@@ -69,13 +69,13 @@ config; `config.json` auto-creates with defaults.
 
 Goal: intercept chat; pass-through everything else; track desk dirtiness.
 
-- ⬜ Route table — intercept chat endpoints (full flow); pass-through the rest.
+- ✅ Route table — intercept chat endpoints (full flow); pass-through the rest.
       *(design: Transparency — endpoint table)*
-- ⬜ Desk-dirty marking — non-chat slot mutators (completion/embedding/rerank/
+- ✅ Desk-dirty marking — non-chat slot mutators (completion/embedding/rerank/
       slots-no-action/models-lifecycle/stream) invalidate `ram_since_restore`.
       *(design: Transparency — Desk dirty)*
-- ⬜ Slot count read at startup per model (`GET /slots`). *(design: Slot awareness)*
-- ⬜ **Filename namespacing** — `{model}/{conv}.bin` (per-model subdirs). *(design:
+- ✅ Slot count read at startup per model (`GET /slots`). *(design: Slot awareness)*
+- ✅ **Filename namespacing** — `{model}/{conv}.bin` (per-model subdirs). *(design:
       Deployment; Resolved decisions — Multi-model)*
 
 **Done when:** chat is intercepted; an `/embeddings` call marks the desk dirty;
@@ -262,3 +262,15 @@ is upstream, the fork only adds the `prompt_cache_source` reporting string.
 **Lessons**: verified byte-identical with a mock upstream (GET, POST with body/header/
 query, streaming in chunks) + 502 on dead upstream. Phase 0 "Done when" gate met;
 deployment prerequisites (server-only-via-proxy, shared FS) are operational.
+
+## [2026-01-08] — Session 4
+**Task**: Phase 1 — Endpoint routing (route table, desk-dirty, slot count, path layout).
+**Changes**:
+- `src/routes.py` — route table: classify(method, path, query) → Action (INTERCEPT,
+  PASS_DESK_DIRTY, PASS, PROXY_INTERNAL). 42/42 test cases pass against the design's
+  endpoint table.
+- `src/desk.py` — Desk state: n_slots (from GET /slots), ram_since_restore per slot,
+  mark_dirty/mark_all_dirty/is_warm/add_forward/set_restore.
+- `src/storage.py` — conv_path(save_root, model, conv) → {root}/{model}/{conv}.bin.
+**Lessons**: route table is method-aware (POST /models = desk dirty, GET /models =
+pass). Desk-dirty = ram_since_restore ∅ (next chat is a restore candidate).
