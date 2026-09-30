@@ -18,7 +18,7 @@ step.** Spec: `llamacpp-autosave-proxy-design.md` (source of truth). Workflow:
 
 | # | Phase | Status | Notes |
 |---|---|---|---|
-| 0 | Scaffolding | ⬜ | entry point, config (load/generate), transparent forward |
+| 0 | Scaffolding | 🔨 | entry point, config (load/generate), transparent forward |
 | 1 | Endpoint routing | ⬜ | route table, desk-dirty, slot count, `{model}/{conv}.bin` |
 | 2 | Conversation keying | ⬜ | content-derived id, tail match, forks, sanitize |
 | 3 | Save | ⬜ | trigger, tmp+rename, ledger, LRU, thrashing guard |
@@ -44,12 +44,12 @@ tested. Phases are ordered so each is independently runnable.
 Goal: a config-driven transparent reverse proxy that forwards a chat request
 byte-identically. **Structure mirrors `skill-sync-script`.**
 
-- ⬜ Entry point — `proxycache.py` (thin wrapper) → `src/__main__.py`
+- ✅ Entry point — `proxycache.py` (thin wrapper) → `src/__main__.py`
       (`argparse`, `main() -> int`) → `src/config.py`. Run:
       `venv/bin/python proxycache.py [flags]`. *(mirrors skill-sync-script)*
-- ⬜ Flags — `--version`, `--config <path>`, `--generate-config`. **No TUI**: default
+- ✅ Flags — `--version`, `--config <path>`, `--generate-config`. **No TUI**: default
       (no flags) = **serve the proxy**. *(design: Configuration)*
-- ⬜ Config system — single `config.json`; `--generate-config` emits every key with
+- ✅ Config system — single `config.json`; `--generate-config` emits every key with
       default + accepted values + description (self-documenting, skillsync-style);
       auto-generate with defaults if missing; precedence file > default.
       *(design: Configuration — Knobs table)*
@@ -237,3 +237,17 @@ cherry-pick) instead of pinning to one; document the results.
 **Lessons**: "Full verification" = the design's own 11-item re-verification
 checklist. #26004 cherry-picks cleanly onto master `25747b08`; the KV-tier mechanism
 is upstream, the fork only adds the `prompt_cache_source` reporting string.
+
+## [2026-01-08] — Session 2
+**Task**: Phase 0 items 1–3 — entry point, flags, config system.
+**Changes**:
+- `proxycache.py` — root thin wrapper → `src.__main__.main()`.
+- `src/__main__.py` — argparse (`--version`, `--config`, `--generate-config`);
+  default = serve (loads config; the serve loop is item 5).
+- `src/config.py` — single `config.json`; `DEFAULTS` + `DESCRIPTIONS` (14 knobs from
+  the design Knobs table); `--generate-config` self-doc; auto-generate if missing;
+  file > default precedence.
+- `config.json` — auto-created with defaults.
+**Lessons**: mirrors skill-sync-script (namespace package, no `__init__.py`;
+`load_config` deep-merges the file over defaults). Tested: all 3 flags + override-wins
++ partial-merge-with-defaults.

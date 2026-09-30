@@ -1,0 +1,17 @@
+{
+  "listen": "127.0.0.1:8080",
+  "upstream": "127.0.0.1:5000",
+  "save_path": "",
+  "min_save_tokens": 512,
+  "n_max_files": 4,
+  "max_bytes": 2147483648,
+  "thrash_window": 8,
+  "thrash_max_switches": 1,
+  "tail_match_min": 64,
+  "cache_reuse": 0,
+  "cache_reuse_mode": "targeted",
+  "health_poll_ms": 3000,
+  "control_timeout_ms": 10000,
+  "api_key": ""
+}
+
