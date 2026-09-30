@@ -9,7 +9,10 @@ import argparse
 
 from importlib.metadata import PackageNotFoundError, version
 
+from aiohttp import web
+
 from src.config import generate_config_text, load_config
+from src.proxy import make_app
 
 try:
     __version__ = version("proxycache")
@@ -40,6 +43,11 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _split_host_port(host_port: str) -> tuple[str, int]:
+    host, port = host_port.rsplit(":", 1)
+    return host, int(port)
+
+
 def main() -> int:
     args = build_parser().parse_args()
 
@@ -49,9 +57,11 @@ def main() -> int:
 
     # Default: serve the proxy.
     config, path = load_config(args.config)
-    # Phase 0 item 5 (transparent forward) starts the serve loop here.
-    print(f"proxycache: config loaded from {path}")
-    print(f"proxycache: listen={config['listen']} upstream={config['upstream']}")
+    host, port = _split_host_port(config["listen"])
+    upstream = config["upstream"]
+    print(f"proxycache: serving on {host}:{port} -> {upstream} (config: {path})")
+    app = make_app(upstream)
+    web.run_app(app, host=host, port=port)
     return 0
 
 

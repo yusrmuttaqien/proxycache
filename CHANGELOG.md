@@ -53,8 +53,8 @@ byte-identically. **Structure mirrors `skill-sync-script`.**
       default + accepted values + description (self-documenting, skillsync-style);
       auto-generate with defaults if missing; precedence file > default.
       *(design: Configuration — Knobs table)*
-- ⬜ `requirements.txt` — pinned deps; use the provided `venv/` (Python 3.12).
-- ⬜ Transparent forward — all requests proxied, responses streamed back
+- ✅ `requirements.txt` — pinned deps (aiohttp 3.14.3); use the provided `venv/` (Python 3.12).
+- ✅ Transparent forward — all requests proxied, responses streamed back
       byte-identical. *(design: Transparency)*
 - ⬜ **Deployment prerequisites** — server port reachable **only via the proxy**
       (else the action log goes stale silently); **shared filesystem** — the server
@@ -251,3 +251,14 @@ is upstream, the fork only adds the `prompt_cache_source` reporting string.
 **Lessons**: mirrors skill-sync-script (namespace package, no `__init__.py`;
 `load_config` deep-merges the file over defaults). Tested: all 3 flags + override-wins
 + partial-merge-with-defaults.
+
+## [2026-01-08] — Session 3
+**Task**: Phase 0 items 4-5 — requirements.txt + transparent forward.
+**Changes**:
+- `requirements.txt` — pinned deps (aiohttp 3.14.3).
+- `src/proxy.py` — transparent forward: catch-all route forwarding every request to
+  upstream, responses streamed back byte-identical; 502 when upstream down.
+- `src/__main__.py` — serve loop (default = start the proxy on `listen` → `upstream`).
+**Lessons**: verified byte-identical with a mock upstream (GET, POST with body/header/
+query, streaming in chunks) + 502 on dead upstream. Phase 0 "Done when" gate met;
+deployment prerequisites (server-only-via-proxy, shared FS) are operational.
