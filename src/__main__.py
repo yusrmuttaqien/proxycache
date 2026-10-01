@@ -11,7 +11,14 @@ from importlib.metadata import PackageNotFoundError, version
 
 from aiohttp import web
 
-from src.config import generate_config_text, load_config
+from src.config import (
+    CONFIG_FILENAME,
+    DEFAULTS,
+    PROJECT_ROOT,
+    generate_config_text,
+    load_config,
+    write_config,
+)
 from src.proxy import make_app
 
 try:
@@ -52,7 +59,9 @@ def main() -> int:
     args = build_parser().parse_args()
 
     if args.generate_config:
-        print(generate_config_text())
+        config_path = PROJECT_ROOT / CONFIG_FILENAME
+        write_config(DEFAULTS, config_path)
+        print(f"Generated {config_path}")
         return 0
 
     # Default: serve the proxy.
