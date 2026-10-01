@@ -529,6 +529,13 @@ serialized.
 | `control_timeout_ms` | int | `10000` | `> 0` | timeout for proxy-issued `save`/`restore`/`input_tokens` calls |
 | `api_key` | string | `""` | any string | server's `--api-key`, carried on control calls |
 
+**Auto-detection**: the `save_path` is **per-model** (each model/preset has its own
+`--slot-save-path`). The `/models` endpoint exposes it in each model's
+`status.args` (the `--slot-save-path <dir>` pair). The proxy tracks `model →
+save_path` and uses the correct one when saving. If `save_path` is not set in the
+config, the proxy auto-detects it from `/models` on startup (parse the `args`
+array for `--slot-save-path`).
+
 ### Threshold estimate (`min_save_tokens`)
 
 Break-even: re-prefill `L/PP_speed` vs save+restore `(KV_bytes/token × L)/disk_speed + overhead`.

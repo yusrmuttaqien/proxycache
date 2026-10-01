@@ -107,4 +107,24 @@ def generate_config_text() -> str:
         lines.append(f"# {key}: {description}")
     lines.append("")
     lines.append(json.dumps(DEFAULTS, indent=2, ensure_ascii=False))
+
+
+def detect_save_paths(models_response: dict) -> dict[str, str]:
+    """Auto-detect save_path per model from the /models endpoint.
+
+    Parses each model's status.args for the --slot-save-path <dir> pair.
+    Returns a model -> save_path mapping.
+
+    (design: config — Auto-detection)
+    """
+    save_paths: dict[str, str] = {}
+    for model in models_response.get("data", []):
+        model_id = model.get("id", "")
+        args = model.get("status", {}).get("args", [])
+        # Find the --slot-save-path <dir> pair.
+        for i in range(len(args) - 1):
+            if args[i] == "--slot-save-path":
+                save_paths[model_id] = args[i + 1]
+                break
+    return save_paths
     return "\n".join(lines) + "\n"
