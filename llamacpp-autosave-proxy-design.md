@@ -536,6 +536,18 @@ save_path` and uses the correct one when saving. If `save_path` is not set in th
 config, the proxy auto-detects it from `/models` on startup (parse the `args`
 array for `--slot-save-path`).
 
+**Resolution precedence** (`resolve_save_path(model, config, detected)`):
+1. `config["save_path"]` (if non-empty) → **global override** (applies to all models).
+2. `detected[model]` (if present) → **per-model** auto-detection from `/models`.
+3. `None` → no save_path available (save is skipped; the conv stays RAM-only).
+
+| `config.json` `save_path` | Auto-detected | Result |
+|---|---|---|
+| `"/mnt/AI/kv"` | `{"27B": "/mnt/AI/kv"}` | `"/mnt/AI/kv"` (config wins, global) |
+| `""` | `{"27B": "/mnt/AI/kv"}` | `"/mnt/AI/kv"` (auto-detect, per-model) |
+| `""` | `{}` (detection failed) | `None` (save skipped) |
+| `"/mnt/AI/kv"` | `{}` (detection failed) | `"/mnt/AI/kv"` (config wins) |
+
 ### Threshold estimate (`min_save_tokens`)
 
 Break-even: re-prefill `L/PP_speed` vs save+restore `(KV_bytes/token × L)/disk_speed + overhead`.

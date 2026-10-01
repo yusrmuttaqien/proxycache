@@ -128,4 +128,23 @@ def detect_save_paths(models_response: dict) -> dict[str, str]:
                 save_paths[model_id] = args[i + 1]
                 break
     return save_paths
+
+
+def resolve_save_path(
+    model: str,
+    config_save_path: str,
+    detected: dict[str, str],
+) -> str | None:
+    """Resolve the save_path for a model.
+
+    Precedence:
+    1. config_save_path (if non-empty) -> global override (all models).
+    2. detected[model] (if present) -> per-model auto-detection.
+    3. None -> no save_path available (save skipped; conv stays RAM-only).
+
+    (design: config — Resolution precedence)
+    """
+    if config_save_path:
+        return config_save_path
+    return detected.get(model)
     return "\n".join(lines) + "\n"
