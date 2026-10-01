@@ -283,6 +283,14 @@ doesn't require more than one slot. The server's RAM tier handles the slot manag
 automatically. The tool calls are where the tests happen. **Concurrent requests** is
 the only test that requires more than one slot.
 
+**Multi-chat tests** (like A→B→A): These must be **self-contained** and **built ahead
+of time** — they should not depend on this chat's KV being in the slot (which would
+skew the test). The execution scenario should be independent, and the result should
+be enough to act upon without observing the test in progress. **Note for when
+performing the test**: Create a script that runs the multi-chat test independently
+(e.g., A→B→A), produces a self-contained result, and can be acted upon without
+observing the test in progress.
+
 **Done when:** a chat request goes through the full flow (intercept → fingerprint →
 conv key → decide → execute → stream) against a real `llama-server`; save/restore
 actually happen; metrics are logged. **Note**: Live API tests (Phase 10) run against
