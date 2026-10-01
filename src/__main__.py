@@ -71,7 +71,7 @@ def main() -> int:
     host, port = _split_host_port(config["listen"])
     upstream = config["upstream"]
     print(f"proxycache: serving on {host}:{port} -> {upstream} (config: {path})")
-    app = make_app(upstream)
+    app = make_app(upstream, config)
     web.run_app(app, host=host, port=port)
     return 0
 
