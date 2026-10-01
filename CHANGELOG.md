@@ -230,10 +230,20 @@ Goal: wire all modules into a working proxy flow.
       fingerprint, conv key, slot allocation, save/restore decision, results.
 - ✅ **Save flow** — `_execute_save()`: `POST /slots/{id}?action=save` → ledger
       update → LRU eviction. `src/ledger.py` (FileLedger), `src/lru.py` (LRUEvictor).
-      **Verified**: save writes 9.5 GB to disk.
+      **Verified**: save writes 9.5 GB to disk. Multiple convs work. LRU eviction
+      works (ledger level; file deletion is TODO). Interleaving test works.
+      **Known issue**: Server-side 500 error when the AI disk (`/dev/nvme0n1p3`)
+      is full ("Unable to save slot") — not a proxy issue.
 - ✅ **Restore flow** — `_execute_restore()`: `decide()` → drain → save-first →
       `POST /slots/{id}?action=restore` → `ram_since_restore = {C}`.
       **Verified**: 92.5% cache ratio after restore (KV cache loaded from disk).
+      **Note**: KV cache is restored, but conversation context is lost (the model
+      doesn't know the previous messages). This is a limitation — the proxy
+      stores the KV cache, but not the conversation history.
+- ✅ **Drain/save-first** — verified (conv-1 saved before conv-2 restored).
+- ✅ **Error handling** — verified (graceful failure on timeout, non-existent file).
+- ✅ **Edge cases** — verified (empty messages, malformed JSON — clear error
+  messages).
 - ✅ **`id_slot` injection** — `inject_id_slot(body, slot)` into every chat body
       before forwarding. Content-Length header updated to match modified body.
       Verified against live server.
