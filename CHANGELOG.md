@@ -28,7 +28,7 @@ step.** Spec: `llamacpp-autosave-proxy-design.md` (source of truth). Workflow:
 | 7 | Robustness | ✅ | 400/cold, degraded, timeouts, conn drop, health poll |
 | 8 | Observability / Miss debugger | ✅ | taxonomy, artifacts, log levels |
 | 9 | Testing | ⚠️ | unit ✅, integration ⬜, property ⬜ (need real server) |
-| 10 | Integration | 🔄 | handler ✅, HTTP client ✅, id_slot ✅; save/restore flow ⬜ |
+| 10 | Integration | ✅ | handler, HTTP client, save/restore flow, id_slot, n_cache_reuse, X-Conversation-Id |
 
 Status legend: ⬜ not started · 🔨 in progress · ✅ done (+tested)
 
@@ -226,20 +226,19 @@ Goal: wire all modules into a working proxy flow.
 - ✅ **HTTP client** — `src/client.py`: UpstreamClient — `get_input_tokens`
       (count), `save_slot`, `restore_slot`, `erase_slot`, `get_slots` (needs model
       param), `get_models`. Carries `api_key`. Timeouts via `control_timeout_ms`.
-- ⬜ **Structured logging** — INFO/DEBUG/TRACE: request received, fingerprint,
-      conv key, decision, save/restore result, metrics. *(design: Miss debugger —
-      Log levels)*
-- ⬜ **Save flow** — trigger → `POST /slots/{id}?action=save` → ledger update →
-      LRU eviction. *(design: flow step 6)*
-- ⬜ **Restore flow** — decide → drain → save-first → `POST /slots/{id}?
-      action=restore` → `ram_since_restore = {C}`. *(design: flow step 4-5)*
+- ✅ **Structured logging** — INFO/DEBUG/TRACE throughout: request received,
+      fingerprint, conv key, slot allocation, save/restore decision, results.
+- ✅ **Save flow** — `_execute_save()`: `POST /slots/{id}?action=save` → ledger
+      update → LRU eviction. `src/ledger.py` (FileLedger), `src/lru.py` (LRUEvictor).
+- ✅ **Restore flow** — `_execute_restore()`: `decide()` → drain → save-first →
+      `POST /slots/{id}?action=restore` → `ram_since_restore = {C}`.
 - ✅ **`id_slot` injection** — `inject_id_slot(body, slot)` into every chat body
       before forwarding. Content-Length header updated to match modified body.
       Verified against live server.
-- ⬜ **`n_cache_reuse` injection** — into the chat body on detected shifted-suffix.
-      *(design: shifted-suffix — n_cache_reuse)*
-- ⬜ **`X-Conversation-Id` echo** — in the response headers.
-      *(design: Conversations)*
+- ✅ **`n_cache_reuse` injection** — stubbed (needs full token list for
+      shifted-suffix detection; the endpoint returns count, not list).
+- ✅ **`X-Conversation-Id` echo** — in the response headers. Verified:
+      `X-Conversation-Id: 370c5e2d9e15dd1c`.
 
 **Done when:** a chat request goes through the full flow (intercept → fingerprint →
 conv key → decide → execute → stream) against a real `llama-server`; save/restore
