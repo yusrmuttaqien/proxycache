@@ -15,6 +15,7 @@ from src.config import (
     CONFIG_FILENAME,
     DEFAULTS,
     PROJECT_ROOT,
+    SCHEMA,
     generate_config_text,
     load_config,
     write_config,
@@ -60,7 +61,8 @@ def main() -> int:
 
     if args.generate_config:
         config_path = PROJECT_ROOT / CONFIG_FILENAME
-        write_config(DEFAULTS, config_path)
+        config = {**DEFAULTS, "_schema": SCHEMA}
+        write_config(config, config_path)
         print(f"Generated {config_path}")
         return 0
 

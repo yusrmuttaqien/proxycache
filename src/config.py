@@ -54,6 +54,24 @@ DESCRIPTIONS: dict[str, str] = {
     "api_key": "Server's --api-key, carried on control calls",
 }
 
+# Schema: each key's type/constraint/enum (written as _schema in config.json).
+SCHEMA: dict[str, str] = {
+    "listen": "host:port",
+    "upstream": "host:port",
+    "save_path": "string (directory path; empty = auto-detect from /models)",
+    "min_save_tokens": "int >= 0",
+    "n_max_files": "int >= 0 (0 = unlimited)",
+    "max_gb": "float >= 0 (0 = unlimited)",
+    "thrash_window": "int >= 2",
+    "thrash_max_switches": "int >= 0",
+    "tail_match_min": "int >= 1",
+    "cache_reuse": "int >= 0 (0 = off)",
+    "cache_reuse_mode": "targeted | always",
+    "health_poll_ms": "int > 0",
+    "control_timeout_ms": "int > 0",
+    "api_key": "string",
+}
+
 
 def default_config() -> dict[str, Any]:
     """A fresh copy of the built-in defaults."""
