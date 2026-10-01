@@ -258,8 +258,11 @@ Goal: wire all modules into a working proxy flow.
       shifted-suffix is detected.
 - ✅ **`X-Conversation-Id` echo** — in the response headers. Verified:
       `X-Conversation-Id: 370c5e2d9e15dd1c`.
-- ⬜ **Concurrent requests** — not tested (complex to set up; requires multiple
-      requests in flight at the same time).
+- ⬜ **Concurrent requests** — not tested (requires multiple requests in flight at
+      the same time). **Note**: With a single slot, true concurrency is impossible —
+      the slot can only serve one conversation at a time. The proxy's drain logic
+      (waiting for `in_flight == 0`) is designed for this, but it's unverified.
+      **Proxycache is yet to be checked against concurrent requests.**
 - ⬜ **`n_cache_reuse` behavior** — unverified (the field is accepted, but the
       sliding behavior is unverified; will report back).
 - ⬜ **Conversation context preservation** — design limitation (the proxy stores
@@ -267,6 +270,12 @@ Goal: wire all modules into a working proxy flow.
       doesn't know the previous messages).
 - ⬜ **Very long conversations** — not tested (requires a long conversation; 100K+
       tokens).
+
+**Slot contention note**: When testing in the server environment (single slot), the
+proxy's tests contend with this chat's slot usage. The test script
+(`tests/test_server_env.py`) orchestrates around this: save the current chat before
+the test, run the test, restore the current chat after the test. **Recommendation**:
+Run tests when this chat is idle (not actively using the slot) to avoid interference.
 
 **Done when:** a chat request goes through the full flow (intercept → fingerprint →
 conv key → decide → execute → stream) against a real `llama-server`; save/restore
