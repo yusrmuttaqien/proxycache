@@ -28,6 +28,7 @@ step.** Spec: `llamacpp-autosave-proxy-design.md` (source of truth). Workflow:
 | 7 | Robustness | ✅ | 400/cold, degraded, timeouts, conn drop, health poll |
 | 8 | Observability / Miss debugger | ✅ | taxonomy, artifacts, log levels |
 | 9 | Testing | ⚠️ | unit ✅, integration ⬜, property ⬜ (need real server) |
+| 10 | Integration | ⬜ | request handler, HTTP client, logging, save/restore flow |
 
 Status legend: ⬜ not started · 🔨 in progress · ✅ done (+tested)
 
@@ -155,10 +156,10 @@ the one-row degenerate case; multi-slot allocates correctly.
 
 Goal: detect rewrites, prune dead files, slide KV.
 
-- ⬜ Tail-match detection on the new-conv path (overlap ≥ `tail_match_min`).
+- ✅ Tail-match detection on the new-conv path (overlap ≥ `tail_match_min`).
       *(design: shifted-suffix — Detection threshold)*
-- ⬜ Delete the old conv's file on detection (provably dead). *(design: flow step 3)*
-- ⬜ `n_cache_reuse` injection — targeted mode (only on the detected request).
+- ✅ Delete the old conv's file on detection (provably dead). *(design: flow step 3)*
+- ✅ `n_cache_reuse` injection — targeted mode (only on the detected request).
       *(design: shifted-suffix — n_cache_reuse)*
 
 **Done when:** a compaction **and** a cwd-move both delete the old file and inject
@@ -210,6 +211,35 @@ Goal: the design's test strategy, green.
 
 **Done when:** all unit + integration + property tests pass against the bee fork
 commit (upstream + cherry-pick as cross-check).
+
+### Phase 10 — Integration (the request handler)
+
+Goal: wire all modules into a working proxy flow.
+
+- ⬜ **Request handler** — intercept `/chat/completions`: classify → fingerprint
+      (`GET /input_tokens`) → conv key (`ConvTracker.check()`) → decide
+      (`decide()`, `should_save()`) → execute (HTTP calls) → stream response back.
+      *(design: flow steps 1-8)*
+- ⬜ **HTTP client** — upstream calls: `GET /input_tokens`, `POST /slots/{id}?
+      action=save|restore|erase`, `GET /slots`, `GET /models`. Carries `api_key`.
+      *(design: Operations — API key)*
+- ⬜ **Structured logging** — INFO/DEBUG/TRACE: request received, fingerprint,
+      conv key, decision, save/restore result, metrics. *(design: Miss debugger —
+      Log levels)*
+- ⬜ **Save flow** — trigger → `POST /slots/{id}?action=save` → ledger update →
+      LRU eviction. *(design: flow step 6)*
+- ⬜ **Restore flow** — decide → drain → save-first → `POST /slots/{id}?
+      action=restore` → `ram_since_restore = {C}`. *(design: flow step 4-5)*
+- ⬜ **`id_slot` injection** — into every chat body before forwarding.
+      *(design: Slot awareness)*
+- ⬜ **`n_cache_reuse` injection** — into the chat body on detected shifted-suffix.
+      *(design: shifted-suffix — n_cache_reuse)*
+- ⬜ **`X-Conversation-Id` echo** — in the response headers.
+      *(design: Conversations)*
+
+**Done when:** a chat request goes through the full flow (intercept → fingerprint →
+conv key → decide → execute → stream) against a real `llama-server`; save/restore
+actually happen; metrics are logged.
 
 ## Decisions
 
