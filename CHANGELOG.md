@@ -200,10 +200,11 @@ Goal: the design's test strategy, green.
 
 - ✅ Unit — tail matcher (extend/fork/shifted-suffix), LRU + hysteresis, filename
       sanitization, ledger math, tmp/rename. *(design: Test strategy — Unit)*
-- ⬜ Integration — 8 scenarios against a real `llama-server` at the bee fork commit
+- 🔨 Integration — 8 scenarios against a real `llama-server` at the bee fork commit
       (upstream + cherry-pick as cross-check): round-trip, A→B→A no-waste, shifted-suffix
       delete, thrashing, restore-400, proxy restart, drain, idempotency.
-      *(design: Test strategy — Integration)*
+      **Progress**: save/restore, drain, LRU, error handling, edge cases verified;
+      concurrent, property ⬜. *(design: Test strategy — Integration)*
 - ⬜ Property — saves idempotent (≤1 save/restore); eviction never removes an in-slot
       conv; guard hysteresis bounded; **no-strain invariants** (event-driven only /
       save-idle + restore-empty / guard-OFF = zero control calls / serialized control
