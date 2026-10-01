@@ -56,8 +56,31 @@ async def proxy_handler(request: web.Request, upstream: str) -> web.StreamRespon
         return web.Response(status=502, text="upstream unavailable")
 
 
+async def _detect_save_paths(app: web.Application, upstream: str) -> None:
+    """Startup hook: auto-detect save_path per model from GET /models.
+
+    Stores the model -> save_path mapping in app["save_paths"].
+    (design: config — Auto-detection)
+    """
+    from src.config import detect_save_paths
+    url = f"http://{upstream}/models"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                models = await resp.json()
+                app["save_paths"] = detect_save_paths(models)
+                if app["save_paths"]:
+                    app.logger.info(
+                        f"Auto-detected save_paths: {app['save_paths']}"
+                    )
+    except Exception as e:
+        app.logger.warning(f"save_path auto-detection failed: {e}")
+        app["save_paths"] = {}
+
+
 def make_app(upstream: str) -> web.Application:
     """Build the proxy app with a catch-all route forwarding to upstream."""
     app = web.Application()
     app.router.add_route("*", "/{tail:.*}", lambda r: proxy_handler(r, upstream))
+    app.on_startup.append(lambda app: _detect_save_paths(app, upstream))
     return app
