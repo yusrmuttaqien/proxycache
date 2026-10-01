@@ -107,6 +107,7 @@ def generate_config_text() -> str:
         lines.append(f"# {key}: {description}")
     lines.append("")
     lines.append(json.dumps(DEFAULTS, indent=2, ensure_ascii=False))
+    return "\n".join(lines)
 
 
 def detect_save_paths(models_response: dict) -> dict[str, str]:
