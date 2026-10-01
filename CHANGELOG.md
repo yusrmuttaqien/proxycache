@@ -272,10 +272,13 @@ Goal: wire all modules into a working proxy flow.
       tokens).
 
 **Slot contention note**: When testing in the server environment (single slot), the
-proxy's tests contend with this chat's slot usage. The test script
+proxy's tests do NOT contend with this chat's slot usage — the server's KV management
+(RAM tier) handles it automatically. During tool calls, the proxy is NOT using the slot
+→ the tool call has the slot for itself. When the proxy needs the slot again, the
+server restores the KV from RAM (or does a full prefill if there's a cache miss). **All
+tests except concurrent requests** can be done with a single slot. The test script
 (`tests/test_server_env.py`) orchestrates around this: save the current chat before
-the test, run the test, restore the current chat after the test. **Recommendation**:
-Run tests when this chat is idle (not actively using the slot) to avoid interference.
+the test, run the test, restore the current chat after the test.
 
 **Done when:** a chat request goes through the full flow (intercept → fingerprint →
 conv key → decide → execute → stream) against a real `llama-server`; save/restore
