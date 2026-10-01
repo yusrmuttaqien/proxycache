@@ -49,5 +49,23 @@ full prefill. **Zero client cooperation** — clients install nothing. Full spec
 
 ## Modules (src/)
 
-_(populated as phases land — one module per concern; entry `src/__main__.py`,
-config `src/config.py`)_
+One module per concern; entry `src/__main__.py`, config `src/config.py`.
+
+- `src/__main__.py` — entry point (argparse, serve loop)
+- `src/config.py` — config system (load/generate, save_path detection)
+- `src/proxy.py` — transparent forward (catch-all route)
+- `src/routes.py` — route table (classify → Action)
+- `src/desk.py` — desk state (ram_since_restore, mark_dirty)
+- `src/convkey.py` — conversation keying (ConvTracker)
+- `src/fingerprint.py` — token fingerprint (get_tokens)
+- `src/save.py` — save trigger (should_save)
+- `src/restore.py` — restore decision (decide, RestoreAction)
+- `src/allocator.py` — slot allocator (SlotAllocator, inject_id_slot)
+- `src/shifted.py` — shifted-suffix detection (detect_shifted_suffix)
+- `src/robustness.py` — robustness (timeouts, connection drop, health poll)
+- `src/observability.py` — miss debugger (classify_miss, echo_conversation_id)
+- `src/storage.py` — filename layout (conv_path)
+- `src/client.py` — HTTP client (UpstreamClient)
+- `src/handler.py` — request handler (ProxyState, handle_chat, _execute_save, _execute_restore)
+- `src/ledger.py` — file ledger (FileLedger)
+- `src/lru.py` — LRU eviction (LRUEvictor)

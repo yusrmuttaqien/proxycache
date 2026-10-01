@@ -219,12 +219,14 @@ commit (upstream + cherry-pick as cross-check).
 Goal: wire all modules into a working proxy flow.
 
 - ✅ **Request handler** — intercept `/chat/completions`: classify → fingerprint
-      (`POST /chat/completions/input_tokens`) → conv key (`ConvTracker.check()`) →
-      `id_slot` injection → forward. Save/restore flow not yet wired (next).
-      `src/handler.py`: ProxyState, handle_request, handle_chat, forward.
+      (two-step: `POST /apply-template` + `POST /tokenize` → exact token list) → conv
+      key (`ConvTracker.check()`) → `id_slot` injection → forward. Save/restore flow
+      wired.
+      `src/handler.py`: ProxyState, handle_request, handle_chat, forward,
+      _execute_save, _execute_restore.
       Verified: /models, /slots, /chat/completions all work through the proxy.
-      **Note**: `input_tokens` returns COUNT (not LIST) — design mismatch; using
-      count as basic fingerprint for now.
+      **Note**: `input_tokens` returns COUNT (not LIST) — the proxy uses a two-step
+      process (`/apply-template` + `/tokenize`) to get the exact token list.
 - ✅ **HTTP client** — `src/client.py`: UpstreamClient — `get_input_tokens`
       (count), `save_slot`, `restore_slot`, `erase_slot`, `get_slots` (needs model
       param), `get_models`. Carries `api_key`. Timeouts via `control_timeout_ms`.

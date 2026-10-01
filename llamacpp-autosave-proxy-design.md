@@ -134,8 +134,10 @@ drift, the grep anchors are the stable references.
 
 **Hybrid: prefer `X-Conversation-Id` when present; otherwise infer.**
 
-- Per request: call `input_tokens` → token list `T`. (One call; serves both identity
-  and the save-threshold count.)
+- Per request: get the token list `T`. (Serves both identity and the save-threshold
+  count.) **Implementation note**: The `input_tokens` endpoint returns only the COUNT
+  (not the list). The proxy uses a two-step process: `POST /apply-template` (get the
+  formatted prompt) + `POST /tokenize` (tokenize the prompt) → exact token list.
 - **Same-conversation check**: does `T` extend a known conversation's last token tail
   (longest-tail prefix match)? → same conv, update its tail.
 - **Else new conversation**: assign a **content-derived id** (e.g. hash of the root
@@ -190,6 +192,10 @@ client never sees them. Routes probed from the beellama.cpp fork
 - **Desk dirty** = a slot's `ram_since_restore` is invalidated (∅) → next chat for any
   conv is a restore candidate (restore if file exists). Same safe pattern as
   server/proxy restart.
+- **Filename implementation note**: The design specifies `{model}/{conv}.bin` (per-model
+  subdirectories). The current implementation uses just `{conv}.bin` (no model
+  subdirectory) — the server saves to its default directory, and the proxy tracks the
+  filename in the ledger. Multi-model subdirectory support is a TODO.
 
 ## Save/restore event table (complete)
 
@@ -254,6 +260,11 @@ restore mid-generation, and must not restore a conv that's *already in the tree*
 The proxy tracks **`ram_since_restore`** = set of convs forwarded since the last
 restore (= what's in the live tree). Reset to `{C}` on restore(C); ∪`{C}` on each
 forward; `∅` on server restart.
+
+**Implementation note**: The current implementation uses a single string
+(`state.desk.ram_since_restore = conv_id`) instead of a set. This is sufficient for
+the single-slot case (the current deployment). Multi-slot support (where a slot can
+hold multiple convs) requires upgrading to a set.
 
 ```
 on chat for conv C:
@@ -338,6 +349,10 @@ every conv lives in → save/restore target the right slot, zero guessing.
      displaced conv first) → drain in-flight → if `{conv}.bin` exists: `restore` into
      that slot before forwarding (200 → `ram_since_restore = {conv}`; 400/fail →
      delete file, continue cold). No file → forward cold.
+
+   **Implementation note**: The current implementation hardcodes `in_flight=0` in the
+   `decide()` call (drain is not yet implemented). The drain logic (waiting for
+   in-flight requests to complete) is a TODO.
 5. Forward the chat request **with `id_slot` injected** (the allocated slot); stream
    the response back to the client.
 6. **On response completion (turn boundary)**:
@@ -346,6 +361,11 @@ every conv lives in → save/restore target the right slot, zero guessing.
      - Yes → `save` to `{conv}.tmp` → on 200 rename → `{conv}.bin`; ledger += `n_written`.
      - No → skip (small conv, prefill cheaper than the file I/O).
    - Update conv `last_seen`.
+
+   **Implementation note**: The current implementation checks `save_needed` BEFORE
+   forwarding (not after the response is complete). The save is executed after the
+   response is streamed back to the client. The thrashing guard is not yet implemented
+   (the guard is always ON).
 7. **Eviction**: files > `N_MAX` (3–5) or total > `MAX_BYTES` → evict
    **oldest-used** (LRU by `last_seen`, never a conv currently in a slot). "Oldest
    created" is meaningless — the file is rewritten every save. Sizes from
