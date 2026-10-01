@@ -61,6 +61,8 @@ class ProxyState:
         )
         self.slot_alloc = SlotAllocator(n_slots=config.get("n_slots", 1))
         self.saved_convs: set[str] = set()  # convs already saved
+        self.prev_tokens: tuple[int, ...] | None = None  # previous conv's token list
+        self.prev_conv_id: str | None = None  # previous conv's id
 
     async def initialize(self) -> None:
         """Startup: detect save_paths from /models."""
@@ -122,18 +124,19 @@ async def handle_chat(request: web.Request, state: ProxyState) -> web.StreamResp
         logger.debug("body parse fail — forwarding unmodified")
         return await _forward_bytes(request, state, body)
 
-    # 2. Get the input_tokens count (fingerprint).
-    token_count = await state.client.get_input_tokens(body)
-    if token_count is None:
-        logger.warning("input_tokens failed — forwarding cold")
+    # 2. Get the full token list (fingerprint).
+    # Uses /apply-template + /tokenize (two-step) to get the exact token list.
+    tokens = await state.client.get_token_list(body)
+    if tokens is None:
+        logger.warning("token_list failed — forwarding cold")
         return await _forward_bytes(request, state, body)
+    
+    token_count = len(tokens)
+    logger.info(f"chat: model={model} tokens={token_count}")
 
-    # 3. Determine the conversation key.
-    # NOTE: The endpoint returns the COUNT, not the LIST.
-    # Using count as a basic fingerprint (sufficient for L >= min_save_tokens).
-    # TODO: Use the full token list for a precise fingerprint.
-    conv_id = state.tracker.check([token_count], None)  # count as single-element list
-    logger.info(f"chat: model={model} tokens={token_count} conv={conv_id}")
+    # 3. Determine the conversation key (using the full token list).
+    conv_id = state.tracker.check(tokens, None)
+    logger.info(f"conv={conv_id}")
 
     # 4. Allocate a slot for the conv.
     slot, evicted_conv = state.slot_alloc.allocate(conv_id)
@@ -155,13 +158,22 @@ async def handle_chat(request: web.Request, state: ProxyState) -> web.StreamResp
     # 6. Inject id_slot into the body (always on).
     body = inject_id_slot(body, slot)
 
-    # 6b. Inject n_cache_reuse (targeted mode: only on detected shifted-suffix).
-    # TODO: Need the previous conv's token list to detect shifted-suffix.
-    # For now, skip (the detection requires the full token list, which the
-    # endpoint doesn't return).
-    # is_shifted = is_shifted_suffix(prev_tokens, curr_tokens)
-    # if should_inject_n_cache_reuse(is_shifted, targeted_mode=True):
-    #     body = inject_n_cache_reuse(body)
+    # 6b. Detect shifted-suffix and inject n_cache_reuse (targeted mode).
+    is_shifted = False
+    if state.prev_tokens is not None:
+        is_shifted = detect_shifted_suffix(state.prev_tokens, tokens)
+        logger.debug(f"shifted-suffix: prev={state.prev_conv_id} curr={conv_id} is_shifted={is_shifted}")
+    
+    if should_inject_n_cache_reuse(is_shifted, targeted_mode=True):
+        # Inject n_cache_reuse into the body.
+        data = json.loads(body)
+        data["n_cache_reuse"] = True
+        body = json.dumps(data).encode()
+        logger.info(f"n_cache_reuse injected: conv={conv_id}")
+    
+    # Update the prev_tokens for the next request.
+    state.prev_tokens = tokens
+    state.prev_conv_id = conv_id
 
     # 7. Check if restore is needed.
     restore_needed = conv_id in state.ledger

@@ -153,3 +153,49 @@ class UpstreamClient:
                     return None
         except Exception:
             return None
+
+    async def get_token_list(self, body: bytes) -> tuple[int, ...] | None:
+        """Get the exact token list for a chat body.
+
+        Uses a two-step process:
+        1. POST /apply-template — get the formatted prompt (text).
+        2. POST /tokenize — tokenize the prompt -> get the token list.
+
+        Returns the token list, or None on failure.
+        (design: input_tokens fingerprint — full token list)
+        """
+        import json
+        try:
+            # Extract the model name from the body.
+            data = json.loads(body)
+            model = data.get("model", "")
+            
+            async with aiohttp.ClientSession() as session:
+                # Step 1: Apply the chat template.
+                async with session.post(
+                    f"http://{self.upstream}/apply-template",
+                    data=body,
+                    headers={
+                        **self._headers(),
+                        "Content-Type": "application/json",
+                    },
+                    timeout=self.timeout,
+                ) as resp:
+                    if resp.status != 200:
+                        return None
+                    data = await resp.json()
+                    prompt = data.get("prompt", "")
+
+                # Step 2: Tokenize the prompt.
+                async with session.post(
+                    f"http://{self.upstream}/tokenize",
+                    json={"model": model, "content": prompt},
+                    headers=self._headers(),
+                    timeout=self.timeout,
+                ) as resp:
+                    if resp.status != 200:
+                        return None
+                    data = await resp.json()
+                    return tuple(data.get("tokens", []))
+        except Exception:
+            return None
