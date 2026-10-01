@@ -166,10 +166,14 @@ async def handle_chat(request: web.Request, state: ProxyState) -> web.StreamResp
     
     if should_inject_n_cache_reuse(is_shifted, targeted_mode=True):
         # Inject n_cache_reuse into the body.
-        data = json.loads(body)
-        data["n_cache_reuse"] = True
-        body = json.dumps(data).encode()
-        logger.info(f"n_cache_reuse injected: conv={conv_id}")
+        # NOTE: n_cache_reuse is a NUMBER (min chunk size), not a boolean.
+        # The value comes from the config `cache_reuse` (default 0 = off).
+        cache_reuse = state.config.get("cache_reuse", 0)
+        if cache_reuse > 0:
+            data = json.loads(body)
+            data["n_cache_reuse"] = cache_reuse
+            body = json.dumps(data).encode()
+            logger.info(f"n_cache_reuse injected: conv={conv_id} N={cache_reuse}")
     
     # Update the prev_tokens for the next request.
     state.prev_tokens = tokens
@@ -203,26 +207,40 @@ async def _execute_restore(state: ProxyState, model: str, conv_id: str, slot: in
         logger.debug(f"restore skipped: no ledger entry for conv={conv_id}")
         return
 
+    # Get the slot's current conv and tokens.
+    slot_conv = state.slot_alloc.get_conv(slot)
+    slot_tokens = 0  # TODO: get the actual token count from the slot.
+    
     # Decide the action.
-    action = decide(state.desk, conv_id, True)  # saved=True (it's in the ledger)
-    logger.debug(f"restore decision: conv={conv_id} action={action.value}")
+    action, conv_to_save = decide(
+        conv=conv_id,
+        slot=slot,
+        desk=state.desk,
+        file_exists=True,  # the file exists (it's in the ledger)
+        in_flight=0,  # no in-flight requests
+        slot_conv=slot_conv,
+        save_threshold=state.min_save_tokens,
+        slot_tokens=slot_tokens,
+    )
+    logger.debug(f"restore decision: conv={conv_id} action={action.value} conv_to_save={conv_to_save}")
 
-    if action == RestoreAction.DRAIN:
-        # Drain: save the current conv before restoring.
-        logger.info(f"drain: conv={conv_id} (slot dirty)")
-        # TODO: implement drain logic.
+    if action == RestoreAction.FORWARD_WARM:
+        logger.debug(f"forward_warm: conv={conv_id} (server LCP-reuses)")
         return
 
-    if action == RestoreAction.SAVE_FIRST:
-        # Save-first: save before restore.
-        logger.info(f"save-first: conv={conv_id}")
-        # TODO: implement save-first logic.
+    if action == RestoreAction.FORWARD_COLD:
+        logger.debug(f"forward_cold: conv={conv_id} (in-flight)")
         return
 
     if action == RestoreAction.RESTORE:
+        # Save the displaced conv first (if any).
+        if conv_to_save is not None:
+            logger.info(f"save-first: conv={conv_to_save}")
+            await _execute_save(state, model, conv_to_save, slot)
+        
         # Restore: call the upstream restore endpoint.
         logger.info(f"restore: conv={conv_id} slot={slot} file={entry.path}")
-        result = await state.client.restore_slot(slot, entry.path)
+        result = await state.client.restore_slot(slot, entry.path, model)
         if result is None:
             logger.warning(f"restore failed: conv={conv_id} slot={slot}")
             return
@@ -231,34 +249,25 @@ async def _execute_restore(state: ProxyState, model: str, conv_id: str, slot: in
         logger.info(f"restored: conv={conv_id} slot={slot}")
         return
 
-    if action == RestoreAction.FORWARD:
-        logger.debug(f"forward: conv={conv_id} (no restore needed)")
-        return
-
 
 async def _execute_save(state: ProxyState, model: str, conv_id: str, slot: int) -> None:
     """Execute the save flow: HTTP call -> ledger update -> LRU eviction.
 
     (design: flow step 6)
     """
-    save_path = state.get_save_path(model)
-    if not save_path:
-        logger.debug(f"save skipped: no save_path for model={model}")
-        return
-
-    # Build the filename: {conv_id}.bin
+    # Build the filename: {conv_id}.bin (just a name, no path).
+    # The server saves to its default directory.
     filename = f"{conv_id}.bin"
-    filepath = f"{save_path}/{filename}"
 
     # Call the upstream save endpoint.
-    result = await state.client.save_slot(slot, filepath)
+    result = await state.client.save_slot(slot, filename, model)
     if result is None:
         logger.warning(f"save failed: conv={conv_id} slot={slot}")
         return
 
     # Update the ledger.
-    size = result.get("n_saved", 0)  # bytes saved
-    state.ledger.set(conv_id, filepath, size)
+    size = result.get("n_written", 0)  # bytes written
+    state.ledger.set(conv_id, filename, size)
     state.saved_convs.add(conv_id)
     logger.info(f"saved: conv={conv_id} slot={slot} size={size} bytes")
 

@@ -52,9 +52,11 @@ class UpstreamClient:
         except Exception:
             return None
 
-    async def save_slot(self, slot: int, filename: str) -> dict | None:
+    async def save_slot(self, slot: int, filename: str, model: str) -> dict | None:
         """POST /slots/{id}?action=save — save a slot to disk.
 
+        filename: just a name (no path) — the server saves to its default directory.
+        model: the model name (required by the server).
         Returns the response JSON (n_saved, n_written, etc.), or None on failure.
         (design: Primitives — save)
         """
@@ -63,7 +65,7 @@ class UpstreamClient:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     url,
-                    json={"filename": filename},
+                    json={"model": model, "filename": filename},
                     headers=self._headers(),
                     timeout=self.timeout,
                 ) as resp:
@@ -73,9 +75,11 @@ class UpstreamClient:
         except Exception:
             return None
 
-    async def restore_slot(self, slot: int, filename: str) -> dict | None:
+    async def restore_slot(self, slot: int, filename: str, model: str) -> dict | None:
         """POST /slots/{id}?action=restore — restore a slot from disk.
 
+        filename: just a name (no path) — the server loads from its default directory.
+        model: the model name (required by the server).
         Returns the response JSON, or None on failure (400 = bad file).
         (design: Primitives — restore)
         """
@@ -84,7 +88,7 @@ class UpstreamClient:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     url,
-                    json={"filename": filename},
+                    json={"model": model, "filename": filename},
                     headers=self._headers(),
                     timeout=self.timeout,
                 ) as resp:
