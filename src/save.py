@@ -62,9 +62,9 @@ class LedgerEntry:
 class Ledger:
     """Tracks saved files: conv -> LedgerEntry. Used for LRU eviction."""
 
-    def __init__(self, n_max_files: int = 128, max_bytes: int = 50 * 1024**3):
+    def __init__(self, n_max_files: int = 4, max_gb: float = 2.0):
         self.n_max_files = n_max_files
-        self.max_bytes = max_bytes
+        self.max_bytes = int(max_gb * 1024**3)  # GB -> bytes
         self.entries: dict[str, LedgerEntry] = {}
 
     def add(self, entry: LedgerEntry) -> None:

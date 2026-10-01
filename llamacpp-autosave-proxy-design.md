@@ -519,7 +519,7 @@ serialized.
 | `save_path` | string | (server's `--slot-save-path`) | existing dir | where `.bin` files live (must match the server's) |
 | `min_save_tokens` | int | `512` | `≥ 0` | skip saving below this length |
 | `n_max_files` | int | `4` | `≥ 0` (`0` = ∞) | max files on shelf |
-| `max_bytes` | int | `2147483648` (2 GiB) | `≥ 0` (`0` = ∞) | max total shelf bytes |
+| `max_gb` | float | `2` | `≥ 0` (`0` = ∞) | max total shelf size (GB) |
 | `thrash_window` | int | `8` | `≥ 2` | rolling requests for the guard (`K`) |
 | `thrash_max_switches` | int | `1` | `≥ 0` | switches allowed per window before pause |
 | `tail_match_min` | int | `64` | `≥ 1` | min tail overlap for shifted-suffix detection |
