@@ -230,8 +230,10 @@ Goal: wire all modules into a working proxy flow.
       fingerprint, conv key, slot allocation, save/restore decision, results.
 - ✅ **Save flow** — `_execute_save()`: `POST /slots/{id}?action=save` → ledger
       update → LRU eviction. `src/ledger.py` (FileLedger), `src/lru.py` (LRUEvictor).
+      **Verified**: save writes 9.5 GB to disk.
 - ✅ **Restore flow** — `_execute_restore()`: `decide()` → drain → save-first →
       `POST /slots/{id}?action=restore` → `ram_since_restore = {C}`.
+      **Verified**: 92.5% cache ratio after restore (KV cache loaded from disk).
 - ✅ **`id_slot` injection** — `inject_id_slot(body, slot)` into every chat body
       before forwarding. Content-Length header updated to match modified body.
       Verified against live server.
