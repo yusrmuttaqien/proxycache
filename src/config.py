@@ -54,22 +54,23 @@ DESCRIPTIONS: dict[str, str] = {
     "api_key": "Server's --api-key, carried on control calls",
 }
 
-# Schema: each key's type/constraint/enum (written as _schema in config.json).
+# Schema: each key's type/constraint/enum + ELI5 description
+# (written as _schema in config.json).
 SCHEMA: dict[str, str] = {
-    "listen": "host:port",
-    "upstream": "host:port",
-    "save_path": "string (directory path; empty = auto-detect from /models)",
-    "min_save_tokens": "int >= 0",
-    "n_max_files": "int >= 0 (0 = unlimited)",
-    "max_gb": "float >= 0 (0 = unlimited)",
-    "thrash_window": "int >= 2",
-    "thrash_max_switches": "int >= 0",
-    "tail_match_min": "int >= 1",
-    "cache_reuse": "int >= 0 (0 = off)",
-    "cache_reuse_mode": "targeted | always",
-    "health_poll_ms": "int > 0",
-    "control_timeout_ms": "int > 0",
-    "api_key": "string",
+    "listen": "host:port — where the proxy listens for incoming requests",
+    "upstream": "host:port — where the llama-server (router) is running",
+    "save_path": "string — folder where KV cache files are saved; leave empty to auto-detect",
+    "min_save_tokens": "int >= 0 — don't bother saving conversations shorter than this",
+    "n_max_files": "int >= 0 — max number of cache files to keep on disk (0 = no limit)",
+    "max_gb": "float >= 0 — max total disk space for cache files in GB (0 = no limit)",
+    "thrash_window": "int >= 2 — how many recent requests to watch for rapid switching",
+    "thrash_max_switches": "int >= 0 — how many switches in the window before pausing saves",
+    "tail_match_min": "int >= 1 — how many matching tail tokens to detect a rewritten conversation",
+    "cache_reuse": "int >= 0 — min chunk size to slide KV on rewrite (0 = off)",
+    "cache_reuse_mode": "targeted | always — targeted = only on detected rewrites; always = every request",
+    "health_poll_ms": "int > 0 — how often to check if the server is still alive (ms)",
+    "control_timeout_ms": "int > 0 — max time to wait for save/restore calls before giving up (ms)",
+    "api_key": "string — the server's API key, sent along with control calls",
 }
 
 
