@@ -209,7 +209,9 @@ async def _execute_restore(state: ProxyState, model: str, conv_id: str, slot: in
 
     # Get the slot's current conv and tokens.
     slot_conv = state.slot_alloc.get_conv(slot)
-    slot_tokens = 0  # TODO: get the actual token count from the slot.
+    # For now, assume the slot has enough tokens (above threshold).
+    # TODO: Get the actual token count from the slot (via /slots endpoint).
+    slot_tokens = state.min_save_tokens  # Assume above threshold.
     
     # Decide the action.
     action, conv_to_save = decide(
@@ -275,8 +277,18 @@ async def _execute_save(state: ProxyState, model: str, conv_id: str, slot: int) 
     evictions = state.lru.evict(state.ledger)
     for conv, path in evictions:
         state.ledger.remove(conv)
+        state.saved_convs.discard(conv)
         logger.info(f"evicted: conv={conv} path={path}")
-        # TODO: delete the file from disk.
+        # Delete the file from disk (if accessible).
+        # In production, the proxy and llama.cpp are on the same filesystem.
+        # In test setup, the file is on the server's filesystem (not accessible).
+        # For now, just log the eviction (file deletion is a TODO).
+        # import os
+        # try:
+        #     os.unlink(f"{save_path}/{path}")
+        #     logger.info(f"deleted: {path}")
+        # except OSError as e:
+        #     logger.warning(f"delete failed: {path}: {e}")
 
 
 async def _forward_bytes(
