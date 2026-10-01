@@ -278,11 +278,10 @@ proxy's tests do NOT contend with this chat's slot usage — the server's KV man
 server restores the KV from RAM (or does a full prefill if there's a cache miss).
 **All tests except concurrent requests** can be done with a single slot.
 
-**Testing approach**: The proxy is already running (this chat IS the proxy). The tool
-calls are where the tests happen. The server's RAM tier handles the slot management
-automatically. **No separate test script needed** — each tool call is a self-contained
-test that produces a result that drives the next test. The results are logged to track
-progress.
+**Testing approach**: **Any test can be done** against the server, as long as it
+doesn't require more than one slot. The server's RAM tier handles the slot management
+automatically. The tool calls are where the tests happen. **Concurrent requests** is
+the only test that requires more than one slot.
 
 **Done when:** a chat request goes through the full flow (intercept → fingerprint →
 conv key → decide → execute → stream) against a real `llama-server`; save/restore
