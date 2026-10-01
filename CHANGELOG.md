@@ -235,8 +235,10 @@ Goal: wire all modules into a working proxy flow.
 - ✅ **`id_slot` injection** — `inject_id_slot(body, slot)` into every chat body
       before forwarding. Content-Length header updated to match modified body.
       Verified against live server.
-- ✅ **`n_cache_reuse` injection** — stubbed (needs full token list for
-      shifted-suffix detection; the endpoint returns count, not list).
+- ✅ **`n_cache_reuse` injection** — now works. `get_token_list()` (two-step:
+      `/apply-template` + `/tokenize`) returns the exact token list. Shifted-suffix
+      detection uses the full token list. `n_cache_reuse` is injected when the
+      shifted-suffix is detected.
 - ✅ **`X-Conversation-Id` echo** — in the response headers. Verified:
       `X-Conversation-Id: 370c5e2d9e15dd1c`.
 
