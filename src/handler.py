@@ -276,19 +276,14 @@ async def _execute_save(state: ProxyState, model: str, conv_id: str, slot: int) 
     # LRU eviction: check if over budget.
     evictions = state.lru.evict(state.ledger)
     for conv, path in evictions:
-        state.ledger.remove(conv)
-        state.saved_convs.discard(conv)
-        logger.info(f"evicted: conv={conv} path={path}")
         # Delete the file from disk (if accessible).
         # In production, the proxy and llama.cpp are on the same filesystem.
         # In test setup, the file is on the server's filesystem (not accessible).
-        # For now, just log the eviction (file deletion is a TODO).
-        # import os
-        # try:
-        #     os.unlink(f"{save_path}/{path}")
-        #     logger.info(f"deleted: {path}")
-        # except OSError as e:
-        #     logger.warning(f"delete failed: {path}: {e}")
+        save_path = state.get_save_path(model)
+        full_path = f"{save_path}/{path}" if save_path else None
+        state.ledger.remove(conv, delete_file=True, full_path=full_path)
+        state.saved_convs.discard(conv)
+        logger.info(f"evicted: conv={conv} path={path}")
 
 
 async def _forward_bytes(
