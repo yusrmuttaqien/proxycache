@@ -28,7 +28,7 @@ step.** Spec: `llamacpp-autosave-proxy-design.md` (source of truth). Workflow:
 | 7 | Robustness | ✅ | 400/cold, degraded, timeouts, conn drop, health poll |
 | 8 | Observability / Miss debugger | ✅ | taxonomy, artifacts, log levels |
 | 9 | Testing | ⚠️ | unit ✅, integration ⬜, property ⬜ (need real server) |
-| 10 | Integration | ⬜ | request handler, HTTP client, logging, save/restore flow |
+| 10 | Integration | 🔄 | handler ✅, HTTP client ✅, id_slot ✅; save/restore flow ⬜ |
 
 Status legend: ⬜ not started · 🔨 in progress · ✅ done (+tested)
 
@@ -216,13 +216,16 @@ commit (upstream + cherry-pick as cross-check).
 
 Goal: wire all modules into a working proxy flow.
 
-- ⬜ **Request handler** — intercept `/chat/completions`: classify → fingerprint
-      (`GET /input_tokens`) → conv key (`ConvTracker.check()`) → decide
-      (`decide()`, `should_save()`) → execute (HTTP calls) → stream response back.
-      *(design: flow steps 1-8)*
-- ⬜ **HTTP client** — upstream calls: `GET /input_tokens`, `POST /slots/{id}?
-      action=save|restore|erase`, `GET /slots`, `GET /models`. Carries `api_key`.
-      *(design: Operations — API key)*
+- ✅ **Request handler** — intercept `/chat/completions`: classify → fingerprint
+      (`POST /chat/completions/input_tokens`) → conv key (`ConvTracker.check()`) →
+      `id_slot` injection → forward. Save/restore flow not yet wired (next).
+      `src/handler.py`: ProxyState, handle_request, handle_chat, forward.
+      Verified: /models, /slots, /chat/completions all work through the proxy.
+      **Note**: `input_tokens` returns COUNT (not LIST) — design mismatch; using
+      count as basic fingerprint for now.
+- ✅ **HTTP client** — `src/client.py`: UpstreamClient — `get_input_tokens`
+      (count), `save_slot`, `restore_slot`, `erase_slot`, `get_slots` (needs model
+      param), `get_models`. Carries `api_key`. Timeouts via `control_timeout_ms`.
 - ⬜ **Structured logging** — INFO/DEBUG/TRACE: request received, fingerprint,
       conv key, decision, save/restore result, metrics. *(design: Miss debugger —
       Log levels)*
@@ -230,8 +233,9 @@ Goal: wire all modules into a working proxy flow.
       LRU eviction. *(design: flow step 6)*
 - ⬜ **Restore flow** — decide → drain → save-first → `POST /slots/{id}?
       action=restore` → `ram_since_restore = {C}`. *(design: flow step 4-5)*
-- ⬜ **`id_slot` injection** — into every chat body before forwarding.
-      *(design: Slot awareness)*
+- ✅ **`id_slot` injection** — `inject_id_slot(body, slot)` into every chat body
+      before forwarding. Content-Length header updated to match modified body.
+      Verified against live server.
 - ⬜ **`n_cache_reuse` injection** — into the chat body on detected shifted-suffix.
       *(design: shifted-suffix — n_cache_reuse)*
 - ⬜ **`X-Conversation-Id` echo** — in the response headers.
