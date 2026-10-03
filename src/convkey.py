@@ -22,17 +22,16 @@ def sanitize_conv_id(raw: str) -> str:
 
 
 def derive_id(tokens: tuple[int, ...], head_len: int = 64) -> str:
-    """Derive a content-based id from head + tail (root exchange + match window).
+    """Derive a content-based id from the head (root exchange) only.
 
-    Deterministic: same tokens -> same id (survives a proxy restart).
-    Uses head + tail (not just head) so forks (same head, different tail)
-    get distinct ids.
+    Deterministic: same head -> same id, stable as the conversation grows.
+    Survives a proxy restart (content-derived, no external state).
+    The tail is NOT part of the id — it's used for matching in check(),
+    not for identity. This keeps the id stable as the conv grows.
     """
     head = tokens[:head_len]
-    tail = tokens[-head_len:]
-    combined = head + tail
     # Pack each token as a 4-byte signed integer for a deterministic bytes repr.
-    data = b"".join(t.to_bytes(4, "big", signed=True) for t in combined)
+    data = b"".join(t.to_bytes(4, "big", signed=True) for t in head)
     return hashlib.sha256(data).hexdigest()[:16]
 
 
