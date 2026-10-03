@@ -152,6 +152,13 @@ run_proxycache() { python proxycache.py & }
   back-to-back requests for the same conv trigger unnecessary restore (disk read
   + latency). The refactor must preserve this: after any forward, the conv is
   in RAM → next request is warm → no restore.
+- **LRU oldest-used eviction** (fixed 2026-10-04): ledger now tracks `last_used`
+  per entry; evictor picks the oldest-used (was arbitrary dict order). `touch()`
+  called on save/restore/forward. Eviction triggers on BOTH caps (n_max_files
+  OR max_gb, whichever is binding) and evicts multiple files in one pass if
+  needed. The refactor must preserve: LRU order, both-cap check, multi-evict.
+  **TODO**: eviction should also trigger on startup (after ledger scan), not
+  just after save.
 
 ---
 
