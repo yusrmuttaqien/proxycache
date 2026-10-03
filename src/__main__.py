@@ -6,6 +6,7 @@ Default (no flags): serve the proxy. Flags: --generate-config, --config, --versi
 from __future__ import annotations
 
 import argparse
+import logging
 
 from importlib.metadata import PackageNotFoundError, version
 
@@ -67,10 +68,11 @@ def main() -> int:
         return 0
 
     # Default: serve the proxy.
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     config, path = load_config(args.config)
     host, port = _split_host_port(config["listen"])
     upstream = config["upstream"]
-    print(f"proxycache: serving on {host}:{port} -> {upstream} (config: {path})")
+    print(f"proxycache: serving on {host}:{port} -> {upstream} (config: {path})", flush=True)
     app = make_app(upstream, config)
     web.run_app(app, host=host, port=port)
     return 0
