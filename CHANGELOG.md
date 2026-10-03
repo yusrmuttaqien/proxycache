@@ -27,10 +27,123 @@ step.** Spec: `llamacpp-autosave-proxy-design.md` (source of truth). Workflow:
 | 6 | Shifted-suffix | ✅ | detect+delete, `n_cache_reuse` |
 | 7 | Robustness | ✅ | 400/cold, degraded, timeouts, conn drop, health poll |
 | 8 | Observability / Miss debugger | ✅ | taxonomy, artifacts, log levels |
-| 9 | Testing | ⚠️ | unit ✅, integration 🔨 (save/restore, drain, LRU, error handling, edge cases verified; concurrent, property ⬜), property ⬜ |
+| 9 | Testing | 🔨 | unit ✅, integration 🔨 (save/restore, drain, LRU, error handling, edge cases verified; concurrent, property ⬜), property ⬜ |
 | 10 | Integration | ✅ | handler, HTTP client, save/restore flow, id_slot, n_cache_reuse, X-Conversation-Id, file deletion |
+| 11 | Raw JSON conv ID | ⬜ | `derive_id` from first messages, message comparison, eliminate tokenizer |
+| 12 | Lazy save | ⬜ | save on chat change/shutdown, not every turn |
+| 13 | Supervisor mode | ⬜ | proxy launches server, process management, graceful shutdown |
+| 14 | Ledger on disk | ⬜ | `ledger.json` read/write, no directory scan |
+| 15 | Cleanup + docs | ⬜ | remove dead code, update design/README/AGENTS/config |
 
 Status legend: ⬜ not started · 🔨 in progress · ✅ done (+tested)
+
+---
+
+## Refactor Plan — Raw JSON Foundation + Supervisor Mode
+
+**Goal**: Replace token-based conv identification with raw JSON (messages array)
+comparison. Eliminate tokenizer round-trips. Add lazy save (on shutdown/chat
+change). Proxy becomes server supervisor (launch, monitor, graceful shutdown).
+Ledger moves to disk.
+
+### What changes
+
+| Module | Change |
+|---|---|
+| `src/convkey.py` | `derive_id()` → hash of first 2-3 messages' content (raw JSON). `ConvTracker.check()` → message comparison (head/tail) instead of token tail. |
+| `src/handler.py` | Eliminate `/apply-template` + `/tokenize` calls. Save logic: lazy (on shutdown/chat change) instead of every turn. Proxy launches server. Graceful shutdown handler. |
+| `src/shifted.py` | `detect_shifted_suffix()` → message array comparison (same head, same tail, middle changed) instead of token overlap. |
+| `src/save.py` | `should_save()` → message count / estimated size threshold instead of token count. |
+| `src/ledger.py` | Ledger on disk (`ledger.json`): ID → filename, last-saved timestamp, message count. Read on startup (no directory scan). |
+| `src/config.py` | New config: `server_cmd` (path to `llama-server` binary + args). |
+| `src/fingerprint.py` | **Removed** (dead code — tokenizer calls eliminated). |
+| `local-ai` script | Simplified: launches the proxy only. Proxy launches the server. |
+
+### What stays
+
+| Module | Why |
+|---|---|
+| `src/proxy.py` | Transparent forward (unchanged). |
+| `src/routes.py` | Route table (unchanged). |
+| `src/desk.py` | Desk state (unchanged). |
+| `src/allocator.py` | Slot allocator, `inject_id_slot` (already works on JSON). |
+| `src/client.py` | HTTP client for save/restore calls (unchanged). |
+| `src/robustness.py` | Timeouts, connection drop, health poll (unchanged). |
+| `src/observability.py` | Miss debugger (mostly unchanged). |
+| `src/storage.py` | Filename layout (unchanged). |
+| `src/lru.py` | LRU eviction (unchanged). |
+| `src/restore.py` | Restore decision (mostly unchanged). |
+
+### New responsibilities
+
+- **Server process management**: proxy launches `llama-server` (path from config),
+  monitors it, handles graceful shutdown (save → verify → kill server → kill self).
+- **Ledger on disk**: `ledger.json` in `save_path` dir. Written on every save/evict.
+  Read on startup. No directory scan needed.
+- **Lazy save**: save triggers = (1) chat change (new message detected),
+  (2) model change, (3) graceful shutdown, (4) KV-destruction endpoints
+  (slots no-action, models unload/reload, stream delete).
+
+### Config changes
+
+```
+# New:
+server_cmd: ["/path/to/llama-server", "--models-preset", "...", ...]
+# Existing (unchanged):
+listen, upstream, save_path, min_save_tokens, n_max_files, max_gb,
+thrash_window, thrash_max_switches, tail_match_min, cache_reuse,
+cache_reuse_mode, health_poll_ms, control_timeout_ms, api_key
+```
+
+### `local-ai` script changes
+
+Before:
+```bash
+run_llama() { llama-server --models-preset ... & }
+run_proxycache() { python proxycache.py & }
+# Both launched independently.
+```
+
+After:
+```bash
+run_proxycache() { python proxycache.py & }
+# Proxy launches the server internally (server_cmd from config).
+# Ctrl+C → proxy saves → verifies → kills server → exits.
+```
+
+### Phases (ordered, each independently runnable)
+
+- **Phase 11 — Raw JSON conv ID**: `derive_id()` from first messages. `ConvTracker`
+  message comparison. Eliminate tokenizer calls. Remove `fingerprint.py`.
+- **Phase 12 — Lazy save**: Save on chat change / shutdown, not every turn.
+  Shutdown handler (save → verify → kill server → exit).
+- **Phase 13 — Supervisor mode**: Proxy launches server (`server_cmd` config).
+  Process management. `local-ai` script simplified.
+- **Phase 14 — Ledger on disk**: `ledger.json` read/write. No directory scan.
+  Encryption option for message content.
+- **Phase 15 — Cleanup**: Remove dead code. Update design doc, README, AGENTS.md.
+  Update config. Final integration test.
+
+### Doc updates needed
+
+- `llamacpp-autosave-proxy-design.md` — Conversation key section (raw JSON, not
+  tokens), Save/restore event table (lazy save), Primitives (no tokenizer),
+  Configuration (server_cmd), Operations (supervisor mode, graceful shutdown).
+- `README.md` — Run section (proxy launches server), Config (server_cmd),
+  Ground rules (supervisor mode).
+- `AGENTS.md` — Module list (remove fingerprint.py, add supervisor).
+- `CHANGELOG.md` — This plan + phase tracker updates.
+
+### Risks / open questions
+
+- **Stale save on crash**: if server crashes ungracefully, last save is stale.
+  Mitigation: delta is small (one turn), next restore + LCP reuses most of it.
+- **Message format consistency**: OpenAI chat format is consistent across clients.
+  Edge case: clients that omit system message → handle by hashing whatever
+  `messages[0]` is (role-agnostic).
+- **Supervisor + existing `local-ai`**: the script currently launches both.
+  Migration: script launches proxy only; proxy launches server. Backward compat:
+  if `server_cmd` is empty, proxy doesn't launch (old behavior).
 
 ---
 
@@ -209,8 +322,8 @@ Goal: the design's test strategy, green.
       save-idle + restore-empty / guard-OFF = zero control calls / serialized control
       calls). *(design: event table — No-strain invariants; Test strategy — Property)*
 
-**Done when:** all unit + integration + property tests pass against the bee fork
-commit (upstream + cherry-pick as cross-check).
+**Done when:** all unit + integration + property tests pass against the mainline
+(non-fork) + cherry-picked commit (`25747b08` + #25592 + #26004).
 
 ### Phase 10 — Integration (the request handler)
 
@@ -240,9 +353,8 @@ Goal: wire all modules into a working proxy flow.
 - ✅ **Restore flow** — `_execute_restore()`: `decide()` → drain → save-first →
       `POST /slots/{id}?action=restore` → `ram_since_restore = {C}`.
       **Verified**: 92.5% cache ratio after restore (KV cache loaded from disk).
-      **Note**: KV cache is restored, but conversation context is lost (the model
-      doesn't know the previous messages). This is a limitation — the proxy
-      stores the KV cache, but not the conversation history.
+      **Note**: The KV cache IS the conversation context — when restored, the model
+      has the conversation context.
 - ✅ **Drain/save-first** — verified (conv-1 saved before conv-2 restored).
 - ✅ **Error handling** — verified (graceful failure on timeout, non-existent file).
 - ✅ **Edge cases** — verified (empty messages, malformed JSON — clear error
