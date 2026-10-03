@@ -263,8 +263,8 @@ Goal: wire all modules into a working proxy flow.
       **Proxycache is yet to be checked against concurrent requests.**
 - ✅ **`n_cache_reuse` behavior** — verified (fixed false positive bug: `detect_shifted_suffix`
       now returns `(False, 0)` when the tokens are the same).
-- ✅ **Conversation context preservation** — verified (KV cache is restored, but the
-      conversation history is lost — design limitation).
+- ✅ **Conversation context preservation** — verified (KV cache IS the conversation
+      context; when restored, the model has the conversation context).
 - ✅ **Very long conversations** — verified (99K tokens saved successfully).
 
 **Slot contention note**: When testing in the server environment (single slot), the
