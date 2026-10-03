@@ -215,6 +215,7 @@ async def handle_chat(request: web.Request, state: ProxyState) -> web.StreamResp
     # 10. Mark the conv as in RAM (after cold forward or warm forward).
     #     This prevents unnecessary restore on the next request for the same conv.
     state.desk.ram_since_restore = conv_id
+    state.ledger.touch(conv_id)  # LRU: conv was just accessed
 
     # 11. After response: execute the save flow.
     if save_needed:
@@ -272,8 +273,9 @@ async def _execute_restore(state: ProxyState, model: str, conv_id: str, slot: in
         if result is None:
             logger.warning(f"restore failed: conv={conv_id} slot={slot}")
             return
-        # Update ram_since_restore.
+        # Update ram_since_restore + LRU touch.
         state.desk.ram_since_restore = conv_id
+        state.ledger.touch(conv_id)
         logger.info(f"restored: conv={conv_id} slot={slot}")
         return
 
@@ -293,9 +295,10 @@ async def _execute_save(state: ProxyState, model: str, conv_id: str, slot: int) 
         logger.warning(f"save failed: conv={conv_id} slot={slot}")
         return
 
-    # Update the ledger.
+    # Update the ledger + LRU touch.
     size = result.get("n_written", 0)  # bytes written
     state.ledger.set(conv_id, filename, size)
+    state.ledger.touch(conv_id)
     state.saved_convs.add(conv_id)
     logger.info(f"saved: conv={conv_id} slot={slot} size={size} bytes")
 
