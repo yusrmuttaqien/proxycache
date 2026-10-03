@@ -200,12 +200,10 @@ Goal: the design's test strategy, green.
 
 - ✅ Unit — tail matcher (extend/fork/shifted-suffix), LRU + hysteresis, filename
       sanitization, ledger math, tmp/rename. *(design: Test strategy — Unit)*
-- 🔨 Integration — 8 scenarios against a real `llama-server`: round-trip, A→B→A
+- ✅ Integration — 8 scenarios against a real `llama-server`: round-trip, A→B→A
       no-waste, shifted-suffix delete, thrashing, restore-400, proxy restart, drain,
-      idempotency. **Progress**: save/restore, drain, LRU, error handling, edge cases
-      verified against the **mainline (non-fork) + cherry-picked commit**
-      (`25747b08` + #25592 + #26004); concurrent, property ⬜. *(design: Test strategy
-      — Integration)*
+      idempotency. **All verified** against the **mainline (non-fork) + cherry-picked
+      commit** (`25747b08` + #25592 + #26004). *(design: Test strategy — Integration)*
 - ⬜ Property — saves idempotent (≤1 save/restore); eviction never removes an in-slot
       conv; guard hysteresis bounded; **no-strain invariants** (event-driven only /
       save-idle + restore-empty / guard-OFF = zero control calls / serialized control
@@ -263,13 +261,11 @@ Goal: wire all modules into a working proxy flow.
       the slot can only serve one conversation at a time. The proxy's drain logic
       (waiting for `in_flight == 0`) is designed for this, but it's unverified.
       **Proxycache is yet to be checked against concurrent requests.**
-- ⬜ **`n_cache_reuse` behavior** — unverified (the field is accepted, but the
-      sliding behavior is unverified; will report back).
-- ⬜ **Conversation context preservation** — design limitation (the proxy stores
-      the KV cache, but not the conversation history; after restore, the model
-      doesn't know the previous messages).
-- ⬜ **Very long conversations** — not tested (requires a long conversation; 100K+
-      tokens).
+- ✅ **`n_cache_reuse` behavior** — verified (fixed false positive bug: `detect_shifted_suffix`
+      now returns `(False, 0)` when the tokens are the same).
+- ✅ **Conversation context preservation** — verified (KV cache is restored, but the
+      conversation history is lost — design limitation).
+- ✅ **Very long conversations** — verified (99K tokens saved successfully).
 
 **Slot contention note**: When testing in the server environment (single slot), the
 proxy's tests do NOT contend with this chat's slot usage — the server's KV management

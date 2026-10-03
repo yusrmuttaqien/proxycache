@@ -26,6 +26,10 @@ def detect_shifted_suffix(
     n_old = len(old_tokens)
     max_overlap = min(n_new, n_old)
 
+    # If the tokens are the same, there is no shift.
+    if new_tokens == old_tokens:
+        return False, 0
+
     # Check if the suffix of new_tokens matches the suffix of old_tokens,
     # for the largest overlap >= tail_match_min.
     for overlap in range(max_overlap, tail_match_min - 1, -1):
