@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 
 import aiohttp
 from aiohttp import web
@@ -72,6 +73,19 @@ class ProxyState:
             logger.info(f"save_paths: {self.save_paths}")
         # Scan save_paths for existing .bin files -> rebuild ledger from disk.
         self._scan_disk()
+        # Evict if over cap (startup trigger).
+        evictions = self.lru.evict(self.ledger)
+        for conv, path in evictions:
+            # Find the full path from any save_path.
+            full_path = None
+            for sp in self.save_paths.values():
+                candidate = f"{sp}/{path}" if sp else None
+                if candidate and os.path.isfile(candidate):
+                    full_path = candidate
+                    break
+            self.ledger.remove(conv, delete_file=True, full_path=full_path)
+            self.saved_convs.discard(conv)
+            logger.info(f"evicted (startup): conv={conv} path={path}")
 
     def _scan_disk(self) -> None:
         """Scan save_path directories for .bin files and populate the ledger."""
