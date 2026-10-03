@@ -65,11 +65,33 @@ class ProxyState:
         self.prev_conv_id: str | None = None  # previous conv's id
 
     async def initialize(self) -> None:
-        """Startup: detect save_paths from /models."""
+        """Startup: detect save_paths from /models, scan disk for existing .bin files."""
         models = await self.client.get_models()
         if models:
             self.save_paths = detect_save_paths(models)
             logger.info(f"save_paths: {self.save_paths}")
+        # Scan save_paths for existing .bin files -> rebuild ledger from disk.
+        self._scan_disk()
+
+    def _scan_disk(self) -> None:
+        """Scan save_path directories for .bin files and populate the ledger."""
+        import os
+        seen: set[str] = set()  # avoid duplicate convs across models
+        for model, path in self.save_paths.items():
+            if not path or not os.path.isdir(path):
+                continue
+            for filename in os.listdir(path):
+                if not filename.endswith(".bin"):
+                    continue
+                conv_id = filename[:-4]  # strip .bin
+                if conv_id in seen:
+                    continue
+                seen.add(conv_id)
+                full = os.path.join(path, filename)
+                size = os.path.getsize(full) if os.path.isfile(full) else 0
+                self.ledger.set(conv_id, filename, size)
+        if self.ledger:
+            logger.info(f"ledger rebuilt from disk: {len(self.ledger)} file(s)")
 
     def get_save_path(self, model: str) -> str | None:
         """Resolve the save_path for a model."""
