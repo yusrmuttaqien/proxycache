@@ -212,7 +212,11 @@ async def handle_chat(request: web.Request, state: ProxyState) -> web.StreamResp
     # 9. Forward with the modified body (echoing X-Conversation-Id).
     response = await _forward_bytes(request, state, body, conv_id)
 
-    # 10. After response: execute the save flow.
+    # 10. Mark the conv as in RAM (after cold forward or warm forward).
+    #     This prevents unnecessary restore on the next request for the same conv.
+    state.desk.ram_since_restore = conv_id
+
+    # 11. After response: execute the save flow.
     if save_needed:
         await _execute_save(state, model, conv_id, slot)
 

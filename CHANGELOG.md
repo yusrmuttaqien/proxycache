@@ -145,6 +145,14 @@ run_proxycache() { python proxycache.py & }
   Migration: script launches proxy only; proxy launches server. Backward compat:
   if `server_cmd` is empty, proxy doesn't launch (old behavior).
 
+### Carried-over fixes (must survive the refactor)
+
+- **`ram_since_restore` after cold forward** (fixed 2026-10-04): after forwarding
+  a conv (cold or warm), set `desk.ram_since_restore = conv_id`. Without this,
+  back-to-back requests for the same conv trigger unnecessary restore (disk read
+  + latency). The refactor must preserve this: after any forward, the conv is
+  in RAM → next request is warm → no restore.
+
 ---
 
 ## Work queue (detailed, per phase)
